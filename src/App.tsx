@@ -1,3 +1,4 @@
+import { useEffect } from "react"
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
 import { AppShell } from "@/components/layout/AppShell"
 import { LoginPage } from "@/features/auth/LoginPage"
@@ -12,17 +13,43 @@ import { JobPage } from "@/features/annotate/JobPage"
 import { AnnotationToolPage } from "@/features/annotate/AnnotationTool"
 import { DatasetPage } from "@/features/dataset/DatasetPage"
 import { VersionsPage } from "@/features/versions/VersionsPage"
+import { AccountSettingsPage } from "@/features/settings/AccountSettingsPage"
+import { WorkspaceMembersPage } from "@/features/settings/WorkspaceMembersPage"
+import { useAuthStore } from "@/stores/authStore"
+
+function RequireAuth({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, isHydrating, hydrate } = useAuthStore()
+
+  useEffect(() => {
+    hydrate()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  if (isHydrating) {
+    return (
+      <div className="flex h-screen items-center justify-center text-sm text-muted-foreground">
+        Loading…
+      </div>
+    )
+  }
+  if (!isAuthenticated) return <Navigate to="/login" replace />
+  return <>{children}</>
+}
 
 function App() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* Public routes */}
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
 
-        {/* Authenticated app shell */}
-        <Route element={<AppShell />}>
+        <Route
+          element={
+            <RequireAuth>
+              <AppShell />
+            </RequireAuth>
+          }
+        >
           <Route path="/" element={<Navigate to="/workspace" replace />} />
           <Route path="/workspace" element={<WorkspacePage />} />
           <Route path="/projects" element={<ProjectsPage />} />
@@ -43,6 +70,12 @@ function App() {
           />
           <Route path="/projects/:projectId/dataset" element={<DatasetPage />} />
           <Route path="/projects/:projectId/versions" element={<VersionsPage />} />
+
+          <Route path="/settings/account" element={<AccountSettingsPage />} />
+          <Route
+            path="/settings/workspaces/:workspaceId/members"
+            element={<WorkspaceMembersPage />}
+          />
         </Route>
 
         <Route path="*" element={<Navigate to="/workspace" replace />} />

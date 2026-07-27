@@ -1,4 +1,5 @@
 import { Bell, HelpCircle } from "lucide-react"
+import { useNavigate } from "react-router-dom"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import {
@@ -16,12 +17,10 @@ interface TopbarProps {
 }
 
 export function Topbar({ children }: TopbarProps) {
+  const navigate = useNavigate()
   const { user, logout } = useAuthStore()
-  const initials = user?.name
-    ?.split(" ")
-    .map((n) => n[0])
-    .join("")
-    .slice(0, 2)
+
+  const initials = user?.username?.slice(0, 2).toUpperCase()
 
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-background px-5">
@@ -46,12 +45,16 @@ export function Topbar({ children }: TopbarProps) {
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">
             <div className="px-2 py-1.5">
-              <p className="text-sm font-medium">{user?.name}</p>
+              <p className="text-sm font-medium">{user?.username}</p>
               <p className="text-xs text-muted-foreground">{user?.email}</p>
             </div>
             <DropdownMenuSeparator />
-            <DropdownMenuItem>Account settings</DropdownMenuItem>
-            <DropdownMenuItem onClick={logout}>Sign out</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => navigate("/settings/account")}>
+              Account settings
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={logout}>
+              Sign out
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

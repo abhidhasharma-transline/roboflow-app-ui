@@ -1,30 +1,11 @@
-import type { Workspace, Project } from "@/types/project"
+import type {Project } from "@/types/project"
 import type { ImageItem, Batch } from "@/types/image"
 import type { AnnotationJob, ClassLabel } from "@/types/annotation"
 import type { DatasetVersion } from "@/types/version"
-import type { User } from "@/types/auth"
 
 // Simulate network latency so loading states are actually visible during dev
 const delay = (ms = 400) => new Promise((res) => setTimeout(res, ms))
 
-export const mockUser: User = {
-  id: "u1",
-  name: "Aditi Sharma",
-  email: "aditi@company.com",
-  avatarUrl: null,
-  role: "admin",
-}
-
-const mockWorkspaces: Workspace[] = [
-  {
-    id: "ws1",
-    name: "Acme Robotics",
-    slug: "acme-robotics",
-    memberCount: 8,
-    planTier: "enterprise",
-    createdAt: "2026-01-15T10:00:00Z",
-  },
-]
 
 const mockProjects: Project[] = [
   {
@@ -35,6 +16,8 @@ const mockProjects: Project[] = [
     imageCount: 1240,
     annotatedCount: 890,
     classCount: 5,
+    modelCount: 2,
+    isPublic: false,
     thumbnailUrl: null,
     createdAt: "2026-02-01T09:00:00Z",
     updatedAt: "2026-07-15T12:00:00Z",
@@ -47,6 +30,8 @@ const mockProjects: Project[] = [
     imageCount: 640,
     annotatedCount: 640,
     classCount: 4,
+    modelCount: 1,
+    isPublic: true,
     thumbnailUrl: null,
     createdAt: "2026-03-12T09:00:00Z",
     updatedAt: "2026-07-10T09:00:00Z",
@@ -59,6 +44,8 @@ const mockProjects: Project[] = [
     imageCount: 320,
     annotatedCount: 145,
     classCount: 2,
+    modelCount: 0,
+    isPublic: false,
     thumbnailUrl: null,
     createdAt: "2026-05-20T09:00:00Z",
     updatedAt: "2026-07-18T09:00:00Z",
@@ -115,11 +102,6 @@ const mockVersions: DatasetVersion[] = [
 
 // ---- API functions (mirror the real backend contract) ----
 
-export async function mockGetWorkspaces(): Promise<Workspace[]> {
-  await delay()
-  return mockWorkspaces
-}
-
 export async function mockGetProjects(workspaceId: string): Promise<Project[]> {
   await delay()
   return mockProjects.filter((p) => p.workspaceId === workspaceId)
@@ -155,7 +137,3 @@ export async function mockGetVersions(projectId: string): Promise<DatasetVersion
   return mockVersions.filter((v) => v.projectId === projectId)
 }
 
-export async function mockLogin(email: string, _password: string): Promise<{ user: User; token: string }> {
-  await delay(600)
-  return { user: { ...mockUser, email }, token: "mock-jwt-token" }
-}

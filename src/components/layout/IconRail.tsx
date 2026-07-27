@@ -1,4 +1,4 @@
-import { NavLink } from "react-router-dom"
+import { NavLink, useNavigate } from "react-router-dom"
 import {
   Bot,
   FolderKanban,
@@ -12,6 +12,8 @@ import {
   Bell,
   ChevronsUpDown,
   ChevronRight,
+  UserCog,
+  LogOut,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Logo, LogoMark } from "./Logo"
@@ -22,6 +24,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { useAuthStore } from "@/stores/authStore"
@@ -31,7 +34,6 @@ interface NavItem {
   icon: typeof Bot
   path?: string
   hasSubmenu?: boolean
-  /** Not built yet — rendered visible but non-interactive. */
   disabled?: boolean
 }
 
@@ -44,21 +46,57 @@ const navItems: NavItem[] = [
   { label: "Deployments", icon: Server, hasSubmenu: true, disabled: true },
   { label: "Vision Events", icon: BarChart3, disabled: true },
   { label: "Explore", icon: Compass, disabled: true },
-  { label: "Settings", icon: Settings, hasSubmenu: true, disabled: true },
+  { label: "Settings", icon: Settings, path: "/settings/account" },
   { label: "Activity", icon: Bell, disabled: true },
 ]
 
+function useInitials() {
+  const user = useAuthStore((s) => s.user)
+  if (!user) return "U"
+  return user.username.slice(0, 2).toUpperCase()
+}
+
+/** Account Settings + Sign Out only — every other item from the real
+ *  Roboflow menu (Docs, Community Forum, Changelog, Send Feedback, Report a
+ *  Bug, Email Support, Chat, Talk with an Expert) is deliberately left out;
+ *  this is an internal tool, not a product with a support funnel. */
+function UserMenu({ trigger }: { trigger: React.ReactNode }) {
+  const navigate = useNavigate()
+  const { user, logout } = useAuthStore()
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-64">
+        <div className="flex items-center gap-2.5 px-2 py-1.5">
+          <Avatar className="size-8">
+            <AvatarFallback className="bg-brand/15 text-xs text-brand">
+              {user?.username.slice(0, 2).toUpperCase()}
+            </AvatarFallback>
+          </Avatar>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium">{user?.username}</p>
+            <p className="truncate text-xs text-muted-foreground">{user?.email}</p>
+          </div>
+        </div>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={() => navigate("/settings/account")}>
+          <UserCog className="size-4" />
+          Account Settings
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={logout}>
+          <LogOut className="size-4" />
+          Sign Out
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 export function IconRail({ expanded }: { expanded: boolean }) {
-  const { user } = useAuthStore()
-  const initials =
-    user?.name
-      ?.split(" ")
-      .map((n) => n[0])
-      .join("")
-      .slice(0, 2) || "U"
+  const initials = useInitials()
 
   if (!expanded) {
-    // Collapsed: icon-only rail, used once you're inside a project.
     return (
       <aside className="flex h-screen w-14 shrink-0 flex-col items-center border-r border-sidebar-border bg-sidebar py-3">
         <NavLink to="/projects" className="mb-1">
@@ -107,17 +145,22 @@ export function IconRail({ expanded }: { expanded: boolean }) {
         </nav>
 
         <div className="mt-auto flex flex-col items-center gap-2">
-          <Avatar className="size-7">
-            <AvatarFallback className="bg-brand/15 text-xs text-brand">
-              {initials}
-            </AvatarFallback>
-          </Avatar>
+          <UserMenu
+            trigger={
+              <button>
+                <Avatar className="size-7">
+                  <AvatarFallback className="bg-brand/15 text-xs text-brand">
+                    {initials}
+                  </AvatarFallback>
+                </Avatar>
+              </button>
+            }
+          />
         </div>
       </aside>
     )
   }
 
-  // Expanded: full workspace-level nav with labels, used outside a project.
   return (
     <aside className="flex h-screen w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar">
       <div className="p-4 pb-2">
@@ -176,18 +219,25 @@ export function IconRail({ expanded }: { expanded: boolean }) {
       </nav>
 
       <div className="mt-auto flex flex-col gap-3 p-3">
-        <button className="flex items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-sidebar-accent">
-          <Avatar className="size-7">
-            <AvatarFallback className="bg-brand/15 text-xs text-brand">
-              {initials}
-            </AvatarFallback>
-          </Avatar>
-          <span className="truncate text-sm text-sidebar-foreground">
-            {user?.name}
-          </span>
-        </button>
+        <UserMenu
+          trigger={
+            <button className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-sidebar-accent">
+              <Avatar className="size-7">
+                <AvatarFallback className="bg-brand/15 text-xs text-brand">
+                  {initials}
+                </AvatarFallback>
+              </Avatar>
+              <UserLabel />
+            </button>
+          }
+        />
         <CreditsWidget />
       </div>
     </aside>
   )
+}
+
+function UserLabel() {
+  const user = useAuthStore((s) => s.user)
+  return <span className="truncate text-sm text-sidebar-foreground">{user?.username}</span>
 }

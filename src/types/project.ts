@@ -4,15 +4,6 @@ export type ProjectType =
   | "segmentation"
   | "keypoint-detection"
 
-export interface Workspace {
-  id: string
-  name: string
-  slug: string
-  memberCount: number
-  planTier: "free" | "starter" | "enterprise"
-  createdAt: string
-}
-
 export interface Project {
   id: string
   workspaceId: string

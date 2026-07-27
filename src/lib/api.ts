@@ -1,7 +1,7 @@
 import axios from "axios"
 
 export const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api",
+  baseURL: import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api/v1",
   headers: {
     "Content-Type": "application/json",
   },
@@ -30,4 +30,5 @@ api.interceptors.response.use(
 
 // Toggle: set to true once backend endpoints are live for that feature.
 // Individual hooks check this (or you can flip per-hook) to switch mock -> real.
-export const USE_MOCK_API = import.meta.env.VITE_USE_MOCK_API !== "false"
+// export const USE_MOCK_API = import.meta.env.VITE_USE_MOCK_API !== "false"
+export const USE_MOCK_API = import.meta.env.VITE_USE_MOCK_API === "true"
