@@ -38,79 +38,118 @@ export function RegisterPage() {
   }
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-slate-50 px-4">
-       <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute -left-32 top-0 h-[500px] w-[500px] rounded-full bg-blue-300/40 blur-[120px]" />
-        <div className="absolute right-[-120px] top-20 h-[450px] w-[450px] rounded-full bg-violet-400/40 blur-[120px]" />
-        <div className="absolute bottom-[-120px] left-1/3 h-[450px] w-[450px] rounded-full bg-sky-300/40 blur-[120px]" />
+  <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-slate-50 px-4">
+    {/* Background */}
+    <div className="absolute inset-0 overflow-hidden">
+      <div className="absolute -left-40 top-[-120px] h-[600px] w-[600px] rounded-full bg-sky-300/30 blur-[160px]" />
+
+      <div className="absolute right-[-180px] top-[50px] h-[600px] w-[600px] rounded-full bg-violet-400/30 blur-[160px]" />
+
+      <div className="absolute bottom-[-220px] left-1/3 h-[600px] w-[600px] rounded-full bg-cyan-300/30 blur-[180px]" />
     </div>
-    <div className="relative flex min-h-screen items-center justify-center px-4">
-      <motion.div
-          initial={{ opacity: 0, y: 25, scale: .96 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          transition={{ duration: .5 }}
-          >
-      <Card className="w-full max-w-sm py-8">
+
+    <motion.div
+      initial={{ opacity: 0, y: 25, scale: 0.96 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ duration: 0.5 }}
+      whileHover={{ y: -3 }}
+      className="relative z-10"
+    >
+      <Card className="w-full max-w-md rounded-[32px] border border-white/30 bg-white/70 shadow-[0_20px_80px_rgba(0,0,0,0.12)] backdrop-blur-3xl">
         <CardContent className="p-12">
-          <div className="mb-6 flex flex-col items-center gap-2 text-center">
-            <LogoMark className="size-10" />
-            <h1 className="text-lg font-semibold">Create your account</h1>
-            <p className="text-sm text-muted-foreground">
-              Start building and annotating datasets in minutes.
+          {/* Header */}
+          <div className="mb-8 flex flex-col items-center text-center">
+            <LogoMark className="mb-6 h-[72px] w-[72px]" />
+            <h1 className="text-3xl font-bold tracking-tight">
+              Create Account
+            </h1>
+            <p className="mt-2 text-[15px] leading-6 text-slate-500">
+              Start building computer vision datasets in minutes.
             </p>
           </div>
-
-          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="username">Username</Label>
+          <form onSubmit={handleSubmit} className="space-y-5">
+            <div>
+              <Label htmlFor="username" className="mb-2 block">
+                Username
+              </Label>
               <Input
                 id="username"
-                placeholder="jon doe"
+                className="h-12 rounded-xl border-slate-200 bg-white/80 transition-all focus:border-violet-500 focus:ring-2 focus:ring-violet-200"
+                placeholder="john_doe"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 required
               />
             </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="email">Work email</Label>
+            <div>
+              <Label htmlFor="email" className="mb-2 block">
+                Work email
+              </Label>
               <Input
                 id="email"
                 type="email"
+                className="h-12 rounded-xl border-slate-200 bg-white/80 transition-all focus:border-violet-500 focus:ring-2 focus:ring-violet-200"
                 placeholder="you@company.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
               />
             </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="password">Password</Label>
+            <div>
+              <Label htmlFor="password" className="mb-2 block">
+                Password
+              </Label>
               <Input
                 id="password"
                 type="password"
-                placeholder="At least 8 characters"
+                className="h-12 rounded-xl border-slate-200 bg-white/80 transition-all focus:border-violet-500 focus:ring-2 focus:ring-violet-200"
+                placeholder="Minimum 8 characters"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
               />
             </div>
-            {error && <p className="text-sm text-destructive">{error}</p>}
-            <Button type="submit" variant="brand" className="mt-1" disabled={isLoading}>
-              {isLoading ? "Creating account…" : "Create account"}
+            {error && (
+              <p className="text-sm text-red-500">
+                {error}
+              </p>
+            )}
+            <Button
+              type="submit"
+              disabled={isLoading}
+              className="
+              h-12
+              w-full
+              rounded-xl
+              bg-gradient-to-r
+              from-violet-700
+              to-violet-500
+              text-white
+              shadow-lg
+              transition-all
+              duration-300
+              hover:scale-[1.02]
+              hover:shadow-violet-400/30
+              "
+            >
+              {isLoading ? "Creating account..." : "Create account"}
             </Button>
           </form>
-
-          <p className="mt-6 text-center text-sm text-muted-foreground">
+          <p className="mt-8 text-center text-sm text-slate-500">
             Already have an account?{" "}
-            <Link to="/login" className="font-medium text-brand hover:underline">
+            <Link
+              to="/login"
+              className="font-semibold text-violet-600 hover:underline"
+            >
               Sign in
             </Link>
           </p>
+
         </CardContent>
       </Card>
-      </motion.div>
-    </div>
+    </motion.div>
   </div>
-  )
+)
 }
 
 function extractErrorMessage(err: unknown): string {
