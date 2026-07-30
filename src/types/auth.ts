@@ -7,6 +7,8 @@ export interface User {
   email: string
   username: string
   role: UserRole
+  first_name: string
+  last_name: string
   avatar_url: string | null
   is_active: boolean
 }
@@ -17,6 +19,8 @@ export interface LoginRequest {
 }
 
 export interface RegisterRequest {
+  first_name: string
+  last_name: string
   email: string
   username: string
   password: string

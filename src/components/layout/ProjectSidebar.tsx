@@ -17,6 +17,7 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useProject } from "@/hooks/useProjects"
+import { useActiveWorkspace } from "@/hooks/useActiveWorkspace"
 
 interface SubNavItem {
   label: string
@@ -30,6 +31,7 @@ interface SubNavItem {
 export function ProjectSidebar() {
   const { projectId } = useParams()
   const { project } = useProject(projectId)
+  const { name: workspaceName } = useActiveWorkspace()
   const [dataOpen, setDataOpen] = useState(true)
   const [modelsOpen, setModelsOpen] = useState(true)
 
@@ -39,7 +41,6 @@ export function ProjectSidebar() {
     {
       label: "Dataset",
       icon: Database,
-      badge: project?.imageCount,
       disabled: true,
     },
     { label: "Versions", icon: Layers, disabled: true },
@@ -62,20 +63,12 @@ export function ProjectSidebar() {
           className="mb-3 flex items-center gap-1 text-xs font-medium tracking-wide text-sidebar-muted uppercase hover:text-sidebar-foreground"
         >
           <ArrowLeft className="size-3.5" />
-          mohan
+          {workspaceName ?? "Workspace"}
         </Link>
 
         <div className="mb-2 overflow-hidden rounded-md border border-sidebar-border">
           <div className="flex aspect-video items-center justify-center bg-muted">
-            {project?.thumbnailUrl ? (
-              <img
-                src={project.thumbnailUrl}
-                alt=""
-                className="size-full object-cover"
-              />
-            ) : (
-              <ImageIcon className="size-6 text-muted-foreground/40" />
-            )}
+            <ImageIcon className="size-6 text-muted-foreground/40" />
           </div>
         </div>
 

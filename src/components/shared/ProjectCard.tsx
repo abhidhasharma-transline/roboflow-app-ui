@@ -1,13 +1,13 @@
 import { Link } from "react-router-dom"
-import { Scan, MoreVertical, Globe2 } from "lucide-react"
+import { Scan, Lock, MoreVertical } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import type { Project } from "@/types/project"
 
-const typeLabels: Record<Project["type"], string> = {
-  "object-detection": "Object Detection",
+const typeLabels: Record<Project["annotation_type"], string> = {
+  object_detection: "Object Detection",
   classification: "Classification",
   segmentation: "Segmentation",
-  "keypoint-detection": "Keypoint Detection",
+  keypoint: "Keypoint Detection",
 }
 
 function timeAgo(iso: string) {
@@ -26,22 +26,15 @@ export function ProjectCard({ project }: { project: Project }) {
       to={`/projects/${project.id}/train`}
       className="group block overflow-hidden rounded-lg border border-border bg-card transition-shadow hover:shadow-md"
     >
-      <div className="relative aspect-[16/10] bg-muted">
-        {project.thumbnailUrl && (
-          <img
-            src={project.thumbnailUrl}
-            alt=""
-            className="size-full object-cover"
-          />
-        )}
-        <span className="absolute top-2 left-2 size-4 rounded-full border-2 border-white/90 shadow-sm" />
+      <div className="flex aspect-[16/10] items-center justify-center bg-muted">
+        <Scan className="size-8 text-muted-foreground/30" />
       </div>
 
       <div className="p-3">
         <div className="mb-1.5 flex items-center justify-between gap-2">
           <Badge variant="secondary" className="gap-1 font-normal">
             <Scan className="size-3" />
-            {typeLabels[project.type]}
+            {typeLabels[project.annotation_type]}
           </Badge>
           <button
             onClick={(e) => e.preventDefault()}
@@ -51,16 +44,17 @@ export function ProjectCard({ project }: { project: Project }) {
           </button>
         </div>
 
-        <h3 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
-          <Globe2 className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className="truncate">{project.name}</span>
+        <h3 className="truncate text-sm font-semibold text-foreground">
+          {project.name}
         </h3>
-        <p className="mt-0.5 text-xs text-muted-foreground">
-          Edited {timeAgo(project.updatedAt)}
-        </p>
-        <p className="mt-2 text-xs text-muted-foreground">
-          {project.isPublic ? "Public" : "Private"} · {project.imageCount.toLocaleString()} Images ·{" "}
-          {project.modelCount} Model{project.modelCount !== 1 && "s"}
+        {project.description && (
+          <p className="mt-0.5 truncate text-xs text-muted-foreground">
+            {project.description}
+          </p>
+        )}
+        <p className="mt-2 flex items-center gap-1 text-xs text-muted-foreground">
+          <Lock className="size-3" />
+          Private · Created {timeAgo(project.created_at)}
         </p>
       </div>
     </Link>

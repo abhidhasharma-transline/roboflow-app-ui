@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { useAuthStore } from "@/stores/authStore"
 import { listWorkspaces } from "@/lib/workspaceApi"
 import type { Workspace } from "@/types/workspace"
+import { fullName, initials } from "@/lib/userDisplay"
 
 const roleLabels: Record<string, string> = {
   super_admin: "Super Admin",
@@ -20,7 +21,14 @@ export function AccountSettingsPage() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
 
   useEffect(() => {
-    listWorkspaces().then(setWorkspaces)
+  listWorkspaces()
+    .then((data) => {
+      console.log("Workspaces:", data)
+      setWorkspaces(data)
+    })
+    .catch((err) => {
+      console.error("Workspace Error:", err)
+    })
   }, [])
 
   return (
@@ -46,7 +54,7 @@ export function AccountSettingsPage() {
                     to={`/settings/workspaces/${ws.id}/members`}
                     className="truncate rounded-md px-2 py-1.5 text-sm text-foreground hover:bg-accent"
                   >
-                    {ws.name}
+                    {user?.first_name ?? "Workspace"}
                   </Link>
                 ))}
               </nav>
@@ -64,19 +72,17 @@ export function AccountSettingsPage() {
             <div className="flex items-center gap-4">
               <Avatar className="size-12">
                 <AvatarFallback className="bg-brand/15 text-base text-brand">
-                  {user?.username.slice(0, 2).toUpperCase()}
+                  {user ? initials(user) : "U"}
                 </AvatarFallback>
               </Avatar>
               <div>
                 <div className="flex items-center gap-2">
-                  <p className="font-medium text-foreground">{user?.username}</p>
-                  {user && (
-                    <Badge variant="secondary">
-                      {roleLabels[user.role] ?? user.role}
-                    </Badge>
-                  )}
+                  <p className="font-medium text-foreground">{user ? fullName(user) : ""}</p>
+                  {user && <Badge variant="secondary">{roleLabels[user.role] ?? user.role}</Badge>}
                 </div>
-                <p className="text-sm text-muted-foreground">{user?.email}</p>
+                <p className="text-sm text-muted-foreground">
+                  @{user?.username} · {user?.email}
+                </p>
               </div>
             </div>
             <Button variant="outline" onClick={logout}>

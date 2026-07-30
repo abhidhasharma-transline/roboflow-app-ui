@@ -1,20 +1,36 @@
-export type ProjectType =
-  | "object-detection"
-  | "classification"
+// Mirrors app/projects/schema.py (ProjectResponse) exactly.
+
+export type ProjectVisibility = "public" | "private"
+
+export type ProjectAnnotationType =
+  | "object_detection"
   | "segmentation"
-  | "keypoint-detection"
+  | "classification"
+  | "keypoint"
 
 export interface Project {
   id: string
-  workspaceId: string
   name: string
-  type: ProjectType
-  imageCount: number
-  annotatedCount: number
-  classCount: number
-  modelCount: number
-  isPublic: boolean
-  thumbnailUrl: string | null
-  createdAt: string
-  updatedAt: string
+  slug: string
+  description: string | null
+  visibility: ProjectVisibility
+  annotation_type: ProjectAnnotationType
+  folder_id: string | null
+  is_active: boolean
+  created_at: string
+}
+
+export interface ProjectFolder {
+  id: string
+  workspace_id: string
+  name: string
+  created_by: string
+  created_at: string
+  project_count: number
+}
+
+export interface ProjectMember {
+  id: string
+  user_id: string
+  role: "admin" | "labeler" | "reviewer" | "super_admin"
 }
