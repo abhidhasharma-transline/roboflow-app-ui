@@ -18,6 +18,8 @@ export function RegisterPage() {
   const [password, setPassword] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [firstName, setFirstName] = useState("")
+  const [lastName, setLastName] = useState("")
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -26,7 +28,13 @@ export function RegisterPage() {
     try {
       // /auth/register only returns the created user, not a token — so we
       // log in right after with the same credentials to get one.
-      await register({ email, username, password })
+      await register({
+        first_name: firstName,
+        last_name: lastName,
+        username,
+        email,
+        password,
+      })
       const { user, access_token } = await loginRequest({ email, password })
       login(user, access_token)
       navigate("/workspace")
@@ -69,6 +77,36 @@ export function RegisterPage() {
           </div>
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
+              <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="first-name" className="mb-2 block">
+                  First Name
+                </Label>
+
+                <Input
+                  id="first-name"
+                  className="h-12 rounded-xl border-slate-200 bg-white/80 transition-all focus:border-violet-500 focus:ring-2 focus:ring-violet-200"
+                  placeholder="John"
+                  value={firstName}
+                  onChange={(e) => setFirstName(e.target.value)}
+                  required
+                />
+              </div>
+              <div>
+                <Label htmlFor="last-name" className="mb-2 block">
+                  Last Name
+                </Label>
+
+                <Input
+                  id="last-name"
+                  className="h-12 rounded-xl border-slate-200 bg-white/80 transition-all focus:border-violet-500 focus:ring-2 focus:ring-violet-200"
+                  placeholder="Doe"
+                  value={lastName}
+                  onChange={(e) => setLastName(e.target.value)}
+                  required
+                />
+              </div>
+            </div>
               <Label htmlFor="username" className="mb-2 block">
                 Username
               </Label>

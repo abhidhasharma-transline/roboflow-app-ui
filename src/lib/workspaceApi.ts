@@ -1,10 +1,13 @@
 import { api } from "@/lib/api"
-import type { Workspace, WorkspaceMember } from "@/types/workspace"
+import type {
+  Workspace,
+  WorkspaceMember,
+  WorkspaceInvitation,
+  MyInvitation,
+} from "@/types/workspace"
 
-export async function listWorkspaces(params?: { search?: string }): Promise<Workspace[]> {
-  const res = await api.get<Workspace[]>("/workspaces", {
-    params: { search: params?.search },
-  })
+export async function listWorkspaces(): Promise<Workspace[]> {
+  const res = await api.get<Workspace[]>("/workspaces")
   return res.data
 }
 
@@ -13,19 +16,54 @@ export async function getWorkspace(workspaceId: string): Promise<Workspace> {
   return res.data
 }
 
-/** Super-admin only on the backend — a 403 here means the logged-in user isn't super_admin. */
-export async function createWorkspace(name: string): Promise<Workspace> {
-  const res = await api.post<Workspace>("/workspaces", { name })
-  return res.data
-}
-
-export async function listWorkspaceMembers(workspaceId: string): Promise<WorkspaceMember[]> {
+export async function listWorkspaceMembers(
+  workspaceId: string
+): Promise<WorkspaceMember[]> {
   const res = await api.get<WorkspaceMember[]>(`/workspaces/${workspaceId}/members`)
   return res.data
 }
 
-/** Super-admin only. Throws per-email (404 if that user doesn't exist yet, 400 if already a member). */
-export async function addWorkspaceMember(workspaceId: string, email: string): Promise<{ message: string }> {
-  const res = await api.post<{ message: string }>(`/workspaces/${workspaceId}/members`, { email })
+/* ---------- Invitations ---------- */
+
+export async function inviteWorkspaceMember(
+  workspaceId: string,
+  email: string
+): Promise<{ message: string }> {
+  const res = await api.post<{ message: string }>(
+    `/workspaces/${workspaceId}/invite`,
+    { email }
+  )
+  return res.data
+}
+
+/** Owner-only on the backend — throws 403 if the current user isn't the workspace owner. */
+export async function listWorkspaceInvitations(
+  workspaceId: string
+): Promise<WorkspaceInvitation[]> {
+  const res = await api.get<WorkspaceInvitation[]>(
+    `/workspaces/${workspaceId}/invitations`
+  )
+  return res.data
+}
+
+/** Invitations sent *to* the current user, across all workspaces. */
+export async function listMyInvitations(): Promise<MyInvitation[]> {
+  const res = await api.get<MyInvitation[]>("/workspaces/my/invitations")
+  return res.data
+}
+
+export async function acceptInvitation(token: string): Promise<{ message: string }> {
+  const res = await api.post<{ message: string }>(`/workspaces/invitations/${token}/accept`)
+  return res.data
+}
+
+export async function rejectInvitation(token: string): Promise<{ message: string }> {
+  const res = await api.post<{ message: string }>(`/workspaces/invitations/${token}/reject`)
+  return res.data
+}
+
+/** Owner-only on the backend. Only pending invitations can be cancelled. */
+export async function cancelInvitation(invitationId: string): Promise<{ message: string }> {
+  const res = await api.delete<{ message: string }>(`/workspaces/invitations/${invitationId}`)
   return res.data
 }

@@ -1,57 +1,51 @@
 import { useEffect, useState } from "react"
 import { useParams, Link } from "react-router-dom"
-import { ArrowLeft, Send, MoreVertical } from "lucide-react"
+import { ArrowLeft, UserPlus, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { TagInput } from "@/components/shared/TagInput"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Badge } from "@/components/ui/badge"
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { getWorkspace, listWorkspaceMembers, addWorkspaceMember } from "@/lib/workspaceApi"
-import type { Workspace, WorkspaceMember } from "@/types/workspace"
+  getWorkspace,
+  listWorkspaceMembers,
+  listWorkspaceInvitations,
+  cancelInvitation,
+} from "@/lib/workspaceApi"
+import { InviteMemberDialog } from "@/features/workspace/InviteMemberDialog"
+import type { Workspace, WorkspaceMember, WorkspaceInvitation } from "@/types/workspace"
 
 export function WorkspaceMembersPage() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const [workspace, setWorkspace] = useState<Workspace | null>(null)
   const [members, setMembers] = useState<WorkspaceMember[]>([])
+  const [pendingInvites, setPendingInvites] = useState<WorkspaceInvitation[] | null>(null)
   const [isLoading, setIsLoading] = useState(true)
-  const [inviteEmails, setInviteEmails] = useState<string[]>([])
-  const [isSending, setIsSending] = useState(false)
-  const [inviteErrors, setInviteErrors] = useState<{ email: string; error: string }[]>([])
+  const [dialogOpen, setDialogOpen] = useState(false)
 
   function refetch() {
     if (!workspaceId) return
     setIsLoading(true)
-    Promise.all([getWorkspace(workspaceId), listWorkspaceMembers(workspaceId)])
-      .then(([ws, mem]) => {
+    Promise.all([
+      getWorkspace(workspaceId),
+      listWorkspaceMembers(workspaceId),
+      listWorkspaceInvitations(workspaceId).catch(() => null),
+    ])
+      .then(([ws, mem, invites]) => {
         setWorkspace(ws)
         setMembers(mem)
+        setPendingInvites(invites)
       })
       .finally(() => setIsLoading(false))
   }
 
   useEffect(refetch, [workspaceId])
 
-  async function handleSendInvite() {
-    if (!workspaceId || inviteEmails.length === 0) return
-    setIsSending(true)
-    setInviteErrors([])
-    const failures: { email: string; error: string }[] = []
-    for (const email of inviteEmails) {
-      try {
-        await addWorkspaceMember(workspaceId, email)
-      } catch (err) {
-        failures.push({ email, error: extractErrorMessage(err) })
-      }
-    }
-    setInviteErrors(failures)
-    setInviteEmails(failures.map((f) => f.email))
-    setIsSending(false)
-    refetch()
+  async function handleCancelInvite(invitationId: string) {
+    if (!workspaceId) return
+    await cancelInvitation(invitationId)
+    setPendingInvites((prev) => prev?.filter((i) => i.id !== invitationId) ?? prev)
   }
+
+  const isOwner = pendingInvites !== null
 
   return (
     <div className="flex-1 overflow-y-auto p-8">
@@ -68,47 +62,52 @@ export function WorkspaceMembersPage() {
           {workspace?.name ?? "Workspace"} Settings
         </h1>
 
-        <h2 className="mb-1 text-base font-semibold text-foreground">
-          Members and Roles
-        </h2>
-        <p className="mb-4 text-sm text-muted-foreground">
-          Invite members to this workspace by email. They need an existing
-          account to join.
-        </p>
-
-        <div className="mb-8 rounded-lg border border-border p-5">
-          <p className="mb-2 text-sm font-medium text-foreground">
-            Invite team members
-          </p>
-          <div className="flex items-start gap-2">
-            <TagInput
-              value={inviteEmails}
-              onChange={setInviteEmails}
-              placeholder="name@company.com, another@company.com"
-              className="flex-1"
-            />
-            <Button
-              variant="brand"
-              onClick={handleSendInvite}
-              disabled={isSending || inviteEmails.length === 0}
-            >
-              <Send className="size-4" />
-              {isSending ? "Sending…" : "Send Invite"}
-            </Button>
+        <div className="mb-8 flex items-start justify-between gap-4 rounded-lg border border-border p-5">
+          <div>
+            <h2 className="mb-1 text-base font-semibold text-foreground">
+              Members and Roles
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              {isOwner
+                ? "Invite users to this workspace by email. They'll become members after accepting."
+                : "People with access to this workspace."}
+            </p>
           </div>
-
-          {inviteErrors.length > 0 && (
-            <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800">
-              <ul className="list-inside list-disc space-y-0.5">
-                {inviteErrors.map((e) => (
-                  <li key={e.email}>
-                    {e.email} — {e.error}
-                  </li>
-                ))}
-              </ul>
-            </div>
+          {isOwner && (
+            <Button variant="brand" onClick={() => setDialogOpen(true)} className="shrink-0">
+              <UserPlus className="size-4" />
+              Invite Members
+            </Button>
           )}
         </div>
+
+        {isOwner && pendingInvites && pendingInvites.length > 0 && (
+          <>
+            <h2 className="mb-3 text-base font-semibold text-foreground">
+              Pending Invitations
+            </h2>
+            <div className="mb-8 overflow-hidden rounded-lg border border-border">
+              {pendingInvites.map((invite) => (
+                <div
+                  key={invite.id}
+                  className="flex items-center justify-between border-b border-border px-4 py-3 text-sm last:border-0"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-foreground">{invite.email}</span>
+                    <Badge variant="warning">Pending</Badge>
+                  </div>
+                  <button
+                    onClick={() => handleCancelInvite(invite.id)}
+                    className="flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive"
+                  >
+                    <X className="size-3.5" />
+                    Cancel
+                  </button>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
 
         <h2 className="mb-3 text-base font-semibold text-foreground">
           Team Members with Access
@@ -123,7 +122,6 @@ export function WorkspaceMembersPage() {
                 <tr>
                   <th className="px-4 py-2.5">Name</th>
                   <th className="px-4 py-2.5">Joined</th>
-                  <th className="w-10 px-4 py-2.5" />
                 </tr>
               </thead>
               <tbody>
@@ -145,18 +143,6 @@ export function WorkspaceMembersPage() {
                     <td className="px-4 py-3 text-muted-foreground">
                       {new Date(m.joined_at).toLocaleDateString()}
                     </td>
-                    <td className="px-4 py-3">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger className="rounded p-1 text-muted-foreground hover:bg-accent">
-                          <MoreVertical className="size-4" />
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem disabled>
-                            Remove from workspace (coming soon)
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -164,15 +150,15 @@ export function WorkspaceMembersPage() {
           </div>
         )}
       </div>
+
+      {workspaceId && (
+        <InviteMemberDialog
+          workspaceId={workspaceId}
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+          onInvited={refetch}
+        />
+      )}
     </div>
   )
-}
-
-function extractErrorMessage(err: unknown): string {
-  if (typeof err === "object" && err !== null && "response" in err) {
-    const resp = (err as { response?: { data?: { detail?: unknown } } }).response
-    const detail = resp?.data?.detail
-    if (typeof detail === "string") return detail
-  }
-  return "Couldn't send invite."
 }

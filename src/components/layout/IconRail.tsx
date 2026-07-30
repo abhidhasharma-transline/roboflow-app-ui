@@ -28,6 +28,8 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { useAuthStore } from "@/stores/authStore"
+import { fullName, initials as computeInitials } from "@/lib/userDisplay"
+import { useActiveWorkspace } from "@/hooks/useActiveWorkspace"
 
 interface NavItem {
   label: string
@@ -53,7 +55,7 @@ const navItems: NavItem[] = [
 function useInitials() {
   const user = useAuthStore((s) => s.user)
   if (!user) return "U"
-  return user.username.slice(0, 2).toUpperCase()
+  return computeInitials(user)
 }
 
 /** Account Settings + Sign Out only — every other item from the real
@@ -71,11 +73,12 @@ function UserMenu({ trigger }: { trigger: React.ReactNode }) {
         <div className="flex items-center gap-2.5 px-2 py-1.5">
           <Avatar className="size-8">
             <AvatarFallback className="bg-brand/15 text-xs text-brand">
-              {user?.username.slice(0, 2).toUpperCase()}
+              {user ? computeInitials(user) : "U"}
             </AvatarFallback>
           </Avatar>
           <div className="min-w-0">
-            <p className="truncate text-sm font-medium">{user?.username}</p>
+            <p className="truncate text-sm font-medium">{user ? fullName(user) : ""}</p>
+            <p className="truncate text-xs text-muted-foreground">@{user?.username}</p>
             <p className="truncate text-xs text-muted-foreground">{user?.email}</p>
           </div>
         </div>
@@ -95,6 +98,7 @@ function UserMenu({ trigger }: { trigger: React.ReactNode }) {
 
 export function IconRail({ expanded }: { expanded: boolean }) {
   const initials = useInitials()
+  const { name: workspaceName } = useActiveWorkspace()
 
   if (!expanded) {
     return (
@@ -172,16 +176,13 @@ export function IconRail({ expanded }: { expanded: boolean }) {
           <DropdownMenuTrigger className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left hover:bg-sidebar-accent">
             <div className="flex-1 overflow-hidden">
               <p className="truncate text-sm font-medium text-sidebar-foreground">
-                mohan
-              </p>
-              <p className="truncate text-xs text-sidebar-muted">
-                Public Plan · 2 Members
+                {workspaceName ?? "Loading…"}
               </p>
             </div>
             <ChevronsUpDown className="size-4 text-sidebar-muted" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-56">
-            <DropdownMenuItem>mohan</DropdownMenuItem>
+            <DropdownMenuItem>{workspaceName ?? "Workspace"}</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -239,5 +240,6 @@ export function IconRail({ expanded }: { expanded: boolean }) {
 
 function UserLabel() {
   const user = useAuthStore((s) => s.user)
-  return <span className="truncate text-sm text-sidebar-foreground">{user?.username}</span>
+  if (!user) return null
+  return <span className="truncate text-sm text-sidebar-foreground">{fullName(user)}</span>
 }
