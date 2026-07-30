@@ -49,11 +49,20 @@ export function VideoExtractor({
   onSkip,
 }: VideoExtractorProps) {
   const playerRef = useRef<HTMLVideoElement>(null)
-  const thumbVideoRef = useRef<HTMLVideoElement>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
+  // Callback-ref state instead of useRef: Radix Dialog renders its content
+  // through a Portal whose mount timing isn't synchronous with the first
+  // render commit, so a plain useRef can still be null when our effect first
+  // runs (and its dependency array never changes to trigger a retry). State
+  // updates from the ref callback force a re-render once the nodes are
+  // actually attached, which re-fires the effect below.
+  const [thumbVideoEl, setThumbVideoEl] = useState<HTMLVideoElement | null>(null)
+  const [canvasEl, setCanvasEl] = useState<HTMLCanvasElement | null>(null)
 
   const [currentTime, setCurrentTime] = useState(0)
   const [filmstrip, setFilmstrip] = useState<string[]>([])
+  const [filmstripStatus, setFilmstripStatus] = useState<"loading" | "ready" | "unavailable">(
+    "loading"
+  )
   const [manualOpen, setManualOpen] = useState(false)
   const [manualMarks, setManualMarks] = useState<number[]>([])
 
@@ -69,46 +78,111 @@ export function VideoExtractor({
   const { progress } = useExtractionProgress(workspaceId, projectId, videoUploadId)
 
   // ── Generate filmstrip thumbnails once, off-screen, without touching the visible player ──
+  // Three ways this can legitimately fail:
+  //   1. Missing CORS headers on the video URL — "loadedmetadata"/"error" never fire as expected.
+  //   2. The canvas gets tainted (cross-origin frame the browser wasn't allowed to read) — toDataURL() throws.
+  //   3. A single seek() never completes (slow/partial range-request support) — the original
+  //      code awaited this with no timeout, which is the most likely cause of a permanent
+  //      "Generating preview…" hang. Every seek now races against a timeout.
   useEffect(() => {
-    if (!open || filmstrip.length > 0) return
-    const thumbVideo = thumbVideoRef.current
-    const canvas = canvasRef.current
-    if (!thumbVideo || !canvas) return
+    if (!open || filmstrip.length > 0) {
+      return
+    }
+    const thumbVideo = thumbVideoEl
+    const canvas = canvasEl
+    if (!thumbVideo || !canvas) {
+      return
+    }
 
     let cancelled = false
 
+    function giveUp() {
+      if (cancelled) return
+      cancelled = true
+      setFilmstripStatus("unavailable")
+    }
+
+    const loadTimeout = window.setTimeout(() => giveUp(), 8000)
+
+    function waitForSeek(t: number): Promise<boolean> {
+      return new Promise((resolve) => {
+        let done = false
+        const finish = (ok: boolean) => {
+          if (done) return
+          done = true
+          thumbVideo!.removeEventListener("seeked", onSeeked)
+          window.clearTimeout(seekTimeout)
+          resolve(ok)
+        }
+        const onSeeked = () => finish(true)
+        const seekTimeout = window.setTimeout(() => finish(false), 4000)
+        thumbVideo!.addEventListener("seeked", onSeeked)
+        thumbVideo!.currentTime = t
+      })
+    }
+
     async function generate() {
+      window.clearTimeout(loadTimeout)
+      if (cancelled) return
+
       const ctx = canvas!.getContext("2d")
-      if (!ctx) return
+      if (!ctx) return giveUp()
+
       const results: string[] = []
       const step = video.duration / (FILMSTRIP_FRAME_COUNT + 1)
 
-      for (let i = 1; i <= FILMSTRIP_FRAME_COUNT; i++) {
-        if (cancelled) return
-        const t = step * i
-        await new Promise<void>((resolve) => {
-          const onSeeked = () => {
-            thumbVideo!.removeEventListener("seeked", onSeeked)
-            resolve()
+      try {
+        for (let i = 1; i <= FILMSTRIP_FRAME_COUNT; i++) {
+          if (cancelled) return
+          const t = step * i
+          const seeked = await waitForSeek(t)
+          if (cancelled) return
+          if (!seeked) {
+            continue
           }
-          thumbVideo!.addEventListener("seeked", onSeeked)
-          thumbVideo!.currentTime = t
-        })
-        if (cancelled) return
-        canvas!.width = 80
-        canvas!.height = 56
-        ctx.drawImage(thumbVideo!, 0, 0, 80, 56)
-        results.push(canvas!.toDataURL("image/jpeg", 0.6))
+          canvas!.width = 80
+          canvas!.height = 56
+          ctx.drawImage(thumbVideo!, 0, 0, 80, 56)
+          results.push(canvas!.toDataURL("image/jpeg", 0.6))
+        }
+        if (!cancelled) {
+          if (results.length > 0) {
+            setFilmstrip(results)
+            setFilmstripStatus("ready")
+          } else {
+            giveUp()
+          }
+        }
+      } catch (err) {
+        giveUp()
       }
-      if (!cancelled) setFilmstrip(results)
+    }
+
+    function onError() {
+      window.clearTimeout(loadTimeout)
+      giveUp()
     }
 
     thumbVideo.addEventListener("loadedmetadata", generate, { once: true })
+    thumbVideo.addEventListener("error", onError, { once: true })
+
+    // Set crossOrigin before src imperatively — JSX attribute ordering on
+    // <video> doesn't reliably guarantee crossOrigin applies before the
+    // browser starts fetching, which can otherwise taint the canvas even
+    // when CORS is configured correctly server-side.
+    thumbVideo.crossOrigin = "anonymous"
+    thumbVideo.src = video.video_url
+    thumbVideo.load()
+
     return () => {
       cancelled = true
+      window.clearTimeout(loadTimeout)
+      thumbVideo.removeEventListener("loadedmetadata", generate)
+      thumbVideo.removeEventListener("error", onError)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, video.duration])
+  }, [open, video.duration, thumbVideoEl, canvasEl])
+
 
   const outputCount =
     frameInterval > 0 ? Math.max(1, Math.round(video.duration / frameInterval)) : 0
@@ -190,9 +264,10 @@ export function VideoExtractor({
         </DialogHeader>
 
         <div className="max-h-[75vh] overflow-y-auto p-5">
-          {/* Off-screen video used only to render filmstrip thumbnails onto the canvas */}
-          <video ref={thumbVideoRef} src={video.video_url} muted className="hidden" crossOrigin="anonymous" />
-          <canvas ref={canvasRef} className="hidden" />
+          {/* Off-screen video used only to render filmstrip thumbnails onto the canvas.
+              src/crossOrigin are set imperatively in the effect above, not here. */}
+          <video ref={setThumbVideoEl} muted className="hidden" />
+          <canvas ref={setCanvasEl} className="hidden" />
 
           {!extracting ? (
             <>
@@ -219,9 +294,13 @@ export function VideoExtractor({
 
               {/* Filmstrip with playhead + manual mark ticks */}
               <div className="relative mt-2 flex h-14 overflow-hidden rounded-md border border-border bg-muted">
-                {filmstrip.length === 0 ? (
+                {filmstripStatus === "loading" ? (
                   <div className="flex w-full items-center justify-center text-xs text-muted-foreground">
                     Generating preview…
+                  </div>
+                ) : filmstripStatus === "unavailable" ? (
+                  <div className="flex w-full items-center justify-center text-xs text-muted-foreground">
+                    Preview unavailable — use the player above and the controls below to pick frames.
                   </div>
                 ) : (
                   filmstrip.map((src, i) => (
@@ -245,7 +324,12 @@ export function VideoExtractor({
                 <div className="mt-3 rounded-lg border border-border p-3">
                   <p className="mb-2 text-sm font-semibold text-foreground">Select frames to upload</p>
                   <div className="flex flex-wrap items-center gap-2">
-                    <Button variant="outline" size="sm" onClick={() => jumpToAdjacentMark("prev")}>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={manualMarks.length === 0}
+                      onClick={() => jumpToAdjacentMark("prev")}
+                    >
                       ⏮ Previous
                     </Button>
                     <Button variant="outline" size="sm" onClick={() => seekTo(currentTime - 1 / ASSUMED_FPS)}>
@@ -265,7 +349,12 @@ export function VideoExtractor({
                     <Button variant="outline" size="sm" onClick={() => seekTo(currentTime + 1 / ASSUMED_FPS)}>
                       +1 Frame ›
                     </Button>
-                    <Button variant="outline" size="sm" onClick={() => jumpToAdjacentMark("next")}>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={manualMarks.length === 0}
+                      onClick={() => jumpToAdjacentMark("next")}
+                    >
                       Next ⏭
                     </Button>
                   </div>
