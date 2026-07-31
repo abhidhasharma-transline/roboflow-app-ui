@@ -27,7 +27,7 @@ export function Topbar({ children }: TopbarProps) {
         <Link to="/projects" className="flex items-center gap-2">
           <LogoMark />
           <span className="text-lg font-semibold tracking-tight text-topbar-foreground">
-            annomaster
+            Annomaster
           </span>
         </Link>
         {children && (

@@ -7,7 +7,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { listWorkspaces } from "@/lib/workspaceApi"
+import { listWorkspaces, getWorkspace } from "@/lib/workspaceApi"
 import { useWorkspaceStore } from "@/stores/workspaceStore"
 import { useAuthStore } from "@/stores/authStore"
 import type { Workspace } from "@/types/workspace"
@@ -19,9 +19,32 @@ export function WorkspaceSwitcher({ collapsed }: { collapsed?: boolean }) {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
 
   useEffect(() => {
-    listWorkspaces()
-      .then(setWorkspaces)
-      .catch(() => {})
+    let cancelled = false
+
+    listWorkspaces().then(async (list) => {
+      if (cancelled) return
+      setWorkspaces(list) // show immediately with whatever data we have
+
+      // The list endpoint doesn't always include `name` per item — backfill
+      // it with the single-workspace GET (which does), in parallel, one
+      // request per workspace missing a name. Fine for the small counts a
+      // switcher realistically shows; drop this once the list endpoint
+      // itself returns name (see backend note).
+      const missing = list.filter((w) => !w.name)
+      if (missing.length === 0) return
+
+      const filled = await Promise.all(
+        missing.map((w) => getWorkspace(w.id).catch(() => w))
+      )
+      if (cancelled) return
+      setWorkspaces((prev) =>
+        prev.map((w) => filled.find((f) => f.id === w.id) ?? w)
+      )
+    }).catch(() => {})
+
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   // Belt-and-suspenders: if the store's cached name is missing for any
@@ -67,7 +90,7 @@ export function WorkspaceSwitcher({ collapsed }: { collapsed?: boolean }) {
           workspaces.map((ws) => (
             <DropdownMenuItem key={ws.id} onClick={() => selectWorkspace(ws)}>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm">{ws.name ?? `Workspace ${ws.id.slice(0, 8)}`}</p>
+                <p className="truncate text-sm">{ws.name ?? "Loading…"}</p>
                 <p className="text-xs text-muted-foreground">
                   {ws.owner_id === user?.id ? "Owner" : "Shared with you"}
                 </p>

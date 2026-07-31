@@ -1,14 +1,13 @@
 import { useState } from "react"
 import { useNavigate, useSearchParams, Link } from "react-router-dom"
+
 import { LogoMark } from "@/components/layout/Logo"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { login as loginRequest } from "@/lib/authApi"
 import { useAuthStore } from "@/stores/authStore"
-
-// Dynamic image
-import loginBanner from "@/assets/images/login-banner.jpg"
+import LoginAnimation from "@/components/layout/LoginAnimation"
 
 export function LoginPage() {
   const navigate = useNavigate()
@@ -23,6 +22,7 @@ export function LoginPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+
     setError(null)
     setIsLoading(true)
 
@@ -33,6 +33,7 @@ export function LoginPage() {
       })
 
       login(user, access_token)
+
       navigate(searchParams.get("redirect") || "/projects")
     } catch (err) {
       setError(extractErrorMessage(err))
@@ -42,42 +43,26 @@ export function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen grid lg:grid-cols-2">
+    <div className="min-h-screen bg-[#09090F] grid lg:grid-cols-[1.8fr_0.9fr]">
 
-      {/* LEFT IMAGE */}
-      <div className="hidden lg:block relative">
-        <img
-          src={loginBanner}
-          alt="Login Banner"
-          className="absolute inset-0 h-full w-full object-cover"
-        />
-
-        <div className="absolute inset-0 bg-black/20" />
-
-        <div className="absolute bottom-16 left-16 max-w-md text-white">
-          <h1 className="text-4xl font-bold leading-tight">
-            Welcome Back
-          </h1>
-
-          <p className="mt-4 text-lg text-white/90">
-            Manage datasets, annotations and model versions from one place.
-          </p>
-        </div>
+      {/* LEFT SIDE */}
+      <div className="hidden lg:block">
+        <LoginAnimation />
       </div>
 
-      {/* RIGHT LOGIN */}
-      <div className="flex items-center justify-center bg-background px-8 py-10">
+      {/* RIGHT SIDE */}
+      <div className="flex items-center justify-center border-l border-white/5 bg-[#111118] px-10">
 
-        <div className="w-full max-w-md">
+        <div className="w-full max-w-[430px]">
 
-          <LogoMark className="mb-10 h-11 w-11" />
+          <LogoMark className="mb-8 h-11 w-11" />
 
-          <h2 className="text-3xl font-bold">
-            Sign in
-          </h2>
+          <h1 className="text-3xl font-bold text-white">
+            Welcome back
+          </h1>
 
-          <p className="mt-2 mb-8 text-muted-foreground">
-            Welcome back! Please login to continue.
+          <p className="mt-2 mb-8 text-sm text-zinc-400">
+            Sign in to continue to your workspace.
           </p>
 
           <form
@@ -85,49 +70,101 @@ export function LoginPage() {
             className="space-y-5"
           >
 
-            <div>
-              <Label>Email</Label>
+            <div className="space-y-2">
+              <Label className="text-zinc-300">
+                Email
+              </Label>
 
               <Input
                 type="email"
                 placeholder="you@company.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                className="
+                  h-11
+                  bg-[#17171F]
+                  border-white/10
+                  text-white
+                  placeholder:text-zinc-500
+                  focus:border-violet-500
+                "
               />
             </div>
 
-            <div>
-              <Label>Password</Label>
+            <div className="space-y-2">
+              <Label className="text-zinc-300">
+                Password
+              </Label>
 
               <Input
                 type="password"
                 placeholder="••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                className="
+                  h-11
+                  bg-[#17171F]
+                  border-white/10
+                  text-white
+                  placeholder:text-zinc-500
+                  focus:border-violet-500
+                "
               />
             </div>
 
             {error && (
-              <p className="text-sm text-red-500">
+              <p className="text-sm text-red-400">
                 {error}
               </p>
             )}
 
             <Button
               type="submit"
-              className="w-full h-11"
               disabled={isLoading}
+              className="
+                h-11
+                w-full
+                bg-violet-600
+                hover:bg-violet-500
+                text-white
+              "
             >
               {isLoading ? "Signing in..." : "Sign In"}
             </Button>
 
           </form>
 
-          <p className="mt-8 text-center text-sm text-muted-foreground">
+          <div className="relative my-8">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-white/10" />
+            </div>
+
+            <div className="relative flex justify-center">
+              <span className="bg-[#111118] px-4 text-xs text-zinc-500">
+                OR
+              </span>
+            </div>
+          </div>
+
+          <Button
+            variant="outline"
+            className="
+              h-11
+              w-full
+              border-white/10
+              bg-transparent
+              text-white
+              hover:bg-white/5
+            "
+          >
+            Continue with Google
+          </Button>
+
+          <p className="mt-8 text-center text-sm text-zinc-400">
             Don't have an account?{" "}
             <Link
               to="/register"
-              className="font-semibold text-primary hover:underline"
+              className="font-medium text-violet-400 hover:text-violet-300"
             >
               Create one
             </Link>
@@ -145,6 +182,7 @@ function extractErrorMessage(err: unknown): string {
   if (typeof err === "object" && err !== null && "response" in err) {
     const resp = (err as { response?: { data?: { detail?: unknown } } }).response
     const detail = resp?.data?.detail
+
     if (typeof detail === "string") return detail
   }
 
