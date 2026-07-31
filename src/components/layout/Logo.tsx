@@ -31,7 +31,7 @@ export function Logo({
       <LogoMark />
       {showWordmark && (
         <span className="text-lg font-semibold tracking-tight text-foreground">
-          annomaster
+          Annomaster
         </span>
       )}
     </div>

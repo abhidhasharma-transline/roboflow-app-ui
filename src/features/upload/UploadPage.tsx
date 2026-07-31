@@ -1,4 +1,4 @@
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useParams } from "react-router-dom"
 import {
   Upload,
@@ -6,8 +6,12 @@ import {
   BoxSelect,
   Video,
   FileText,
+  Smartphone,
+  Compass,
+  UploadCloud,
   CheckCircle2,
   AlertTriangle,
+  X,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -16,10 +20,9 @@ import { Label } from "@/components/ui/label"
 import { Progress } from "@/components/ui/progress"
 import { TagInput } from "@/components/shared/TagInput"
 import { VideoExtractor } from "./VideoExtractor"
-import { BatchPreviewGrid } from "./BatchPreviewGrid"
-import { uploadImages, initiateVideoUpload, saveBatch } from "@/lib/uploadApi"
+import { uploadImages } from "@/lib/uploadApi"
 import { useWorkspaceStore } from "@/stores/workspaceStore"
-import type { UploadImagesResponse, VideoInitiateResponse } from "@/types/upload"
+import type { UploadImagesResponse } from "@/types/upload"
 
 const VIDEO_EXTENSIONS = /\.(mp4|mov)$/i
 
@@ -33,17 +36,44 @@ function defaultBatchName() {
   const time = now
     .toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })
     .toLowerCase()
-    .replace(" ", " ")
   return `Uploaded on ${date} at ${time}`
 }
 
 type Stage =
   | { kind: "idle" }
-  | { kind: "uploading"; percent: number; label: string }
-  | { kind: "video-modal"; video: VideoInitiateResponse }
-  | { kind: "preview"; batchId: string }
+  | { kind: "selected"; files: File[]; folderName?: string }
+  | { kind: "committing"; percent: number; label: string }
+  | { kind: "video-modal"; file: File }
   | { kind: "saved"; imageCount: number }
   | { kind: "error"; message: string }
+
+/** One local thumbnail. Owns its own blob URL and revokes it on unmount/file-change.
+ *  Creation and revocation deliberately live in the same effect — see the
+ *  detailed comment on the analogous pattern in VideoExtractor.tsx. Splitting
+ *  creation into useMemo and cleanup into a separate useEffect lets React
+ *  StrictMode's dev-mode mount→cleanup→mount revoke the URL currently being
+ *  displayed before the <img> ever loads it. */
+function LocalThumb({ file, onRemove }: { file: File; onRemove: () => void }) {
+  const [url, setUrl] = useState<string | null>(null)
+  useEffect(() => {
+    const objectUrl = URL.createObjectURL(file)
+    setUrl(objectUrl)
+    return () => URL.revokeObjectURL(objectUrl)
+  }, [file])
+
+  return (
+    <div className="group relative aspect-[4/3] overflow-hidden rounded-md border border-border bg-muted">
+      {url && <img src={url} alt={file.name} className="size-full object-cover" />}
+      <button
+        onClick={onRemove}
+        className="absolute top-1.5 right-1.5 rounded-full bg-black/60 p-1 text-white opacity-0 transition-opacity group-hover:opacity-100"
+      >
+        <X className="size-3" />
+
+      </button>
+    </div>
+  )
+}
 
 export function UploadPage() {
   const { projectId } = useParams()
@@ -59,58 +89,44 @@ export function UploadPage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const folderInputRef = useRef<HTMLInputElement>(null)
 
-  async function handleFiles(fileList: FileList, folderName?: string) {
+  async function commitImages(files: File[], folderName?: string) {
     if (!workspaceId || !projectId) {
       setStage({ kind: "error", message: "No active workspace/project — select a workspace first." })
       return
     }
+    setRowErrors([])
+    setStage({ kind: "committing", percent: 0, label: `Uploading ${files.length} image(s)…` })
+    try {
+      const res = await uploadImages(
+        workspaceId,
+        projectId,
+        files,
+        { batchName, tagNames: tags, folderName },
+        (percent) => setStage({ kind: "committing", percent, label: `Uploading ${files.length} image(s)…` })
+      )
+      setRowErrors(res.errors)
+      setStage({ kind: "saved", imageCount: res.saved })
+    } catch (err) {
+      setStage({ kind: "error", message: extractErrorMessage(err) })
+    }
+  }
+
+  function handleFiles(fileList: FileList, folderName?: string) {
     const files = Array.from(fileList)
     const videoFile = files.find((f) => f.type.startsWith("video/") || VIDEO_EXTENSIONS.test(f.name))
     const imageFiles = files.filter((f) => f !== videoFile)
 
-    setRowErrors([])
-
-    // A drop with a video in it is treated as a video upload — video and
-    // image batches are separate concepts on the backend (SourceTypeEnum),
-    // so we don't try to merge them into one request.
     if (videoFile) {
-      setStage({ kind: "uploading", percent: 0, label: `Uploading ${videoFile.name}…` })
-      try {
-        const res = await initiateVideoUpload(
-          workspaceId,
-          projectId,
-          videoFile,
-          { batchName, tagNames: tags },
-          (percent) => setStage({ kind: "uploading", percent, label: `Uploading ${videoFile.name}…` })
-        )
-        setStage({ kind: "video-modal", video: res })
-      } catch (err) {
-        setStage({ kind: "error", message: extractErrorMessage(err) })
-      }
+      setStage({ kind: "video-modal", file: videoFile })
       return
     }
 
     if (imageFiles.length === 0) return
 
-    setStage({ kind: "uploading", percent: 0, label: `Uploading ${imageFiles.length} image(s)…` })
-    try {
-      const res = await uploadImages(
-        workspaceId,
-        projectId,
-        imageFiles,
-        { batchName, tagNames: tags, folderName },
-        (percent) => setStage({ kind: "uploading", percent, label: `Uploading ${imageFiles.length} image(s)…` })
-      )
-      setRowErrors(res.errors)
-
-      if (createInstantly) {
-        await saveBatch(workspaceId, projectId, res.batch_id, batchName, tags)
-        setStage({ kind: "saved", imageCount: res.saved })
-      } else {
-        setStage({ kind: "preview", batchId: res.batch_id })
-      }
-    } catch (err) {
-      setStage({ kind: "error", message: extractErrorMessage(err) })
+    if (createInstantly) {
+      commitImages(imageFiles, folderName)
+    } else {
+      setStage({ kind: "selected", files: imageFiles, folderName })
     }
   }
 
@@ -128,7 +144,7 @@ export function UploadPage() {
     if (folderInputRef.current) folderInputRef.current.value = ""
   }
 
-  const isBusy = stage.kind === "uploading" || stage.kind === "video-modal"
+  const isBusy = stage.kind === "committing" || stage.kind === "video-modal"
 
   return (
     <div className="flex-1 overflow-y-auto p-8">
@@ -137,8 +153,7 @@ export function UploadPage() {
         Upload Data
       </h1>
 
-      {/* BATCH AND TAG FEILD */}
-      <div className="grid grid-cols-1 gap-6">
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-[1fr_320px]">
         <div>
           <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
@@ -159,11 +174,11 @@ export function UploadPage() {
             <Checkbox
               checked={createInstantly}
               onCheckedChange={(v) => setCreateInstantly(v === true)}
-              disabled={isBusy}
+              disabled={isBusy || stage.kind === "selected"}
             />
-            Create batch instantly
+            Create batch instantly (skip review, upload as soon as files are picked)
           </label>
-          
+
           {stage.kind === "saved" ? (
             <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-12 text-center">
               <CheckCircle2 className="size-10 text-emerald-600" />
@@ -177,15 +192,41 @@ export function UploadPage() {
                 Upload more
               </Button>
             </div>
-          ) : stage.kind === "preview" ? (
-            <BatchPreviewGrid
-              workspaceId={workspaceId ?? ""}
-              projectId={projectId ?? ""}
-              batchId={stage.batchId}
-              batchName={batchName}
-              tags={tags}
-              onSaved={() => setStage({ kind: "saved", imageCount: 0 })}
-            />
+          ) : stage.kind === "selected" ? (
+            <div>
+              <div className="mb-4 flex items-center justify-between">
+                <p className="text-sm text-muted-foreground">
+                  {stage.files.length} image{stage.files.length !== 1 && "s"} ready to upload
+                </p>
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={resetToIdle}>
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="brand"
+                    onClick={() => commitImages(stage.files, stage.folderName)}
+                    disabled={stage.files.length === 0}
+                  >
+                    Save and Continue
+                  </Button>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+                {stage.files.map((file, i) => (
+                  <LocalThumb
+                    key={`${file.name}-${file.lastModified}-${i}`}
+                    file={file}
+                    onRemove={() =>
+                      setStage((prev) =>
+                        prev.kind === "selected"
+                          ? { ...prev, files: prev.files.filter((f) => f !== file) }
+                          : prev
+                      )
+                    }
+                  />
+                ))}
+              </div>
+            </div>
           ) : (
             <div
               onDragOver={(e) => {
@@ -194,11 +235,11 @@ export function UploadPage() {
               }}
               onDragLeave={() => setIsDragging(false)}
               onDrop={isBusy ? undefined : onDrop}
-              className={`flex w-full max-w-7xl flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed p-12 text-center transition-colors ${
+              className={`flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed p-12 text-center transition-colors ${
                 isDragging ? "border-brand bg-brand/5" : "border-border bg-muted/20"
               }`}
             >
-              {stage.kind === "uploading" ? (
+              {stage.kind === "committing" ? (
                 <div className="flex w-full max-w-sm flex-col items-center gap-3 py-6">
                   <p className="text-sm font-medium text-foreground">{stage.label}</p>
                   <Progress value={stage.percent} className="w-full" />
@@ -297,7 +338,49 @@ export function UploadPage() {
             </div>
           )}
         </div>
+
         {/* Right rail — informational only, not wired to a backend yet */}
+        <div className="flex flex-col gap-4">
+          <p className="text-sm font-semibold text-foreground">
+            Need images to get started?
+          </p>
+
+          <div className="rounded-lg border border-border p-4 opacity-60">
+            <div className="mb-3 flex size-9 items-center justify-center rounded-md bg-muted">
+              <Smartphone className="size-4.5 text-foreground" />
+            </div>
+            <p className="mb-1 text-sm font-semibold text-foreground">
+              Upload data from your phone
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Scan a QR code to upload images and videos from your phone
+              directly to your project. (Coming soon)
+            </p>
+          </div>
+
+          <div className="rounded-lg border border-border p-4 opacity-60">
+            <div className="mb-3 flex size-9 items-center justify-center rounded-md bg-muted">
+              <Compass className="size-4.5 text-foreground" />
+            </div>
+            <p className="mb-1 text-sm font-semibold text-foreground">
+              Search public datasets
+            </p>
+            <p className="mb-3 text-xs text-muted-foreground">
+              (Coming soon)
+            </p>
+            <Input placeholder="Search for images" disabled />
+          </div>
+
+          <div className="rounded-lg border border-border p-4 opacity-60">
+            <div className="flex size-9 items-center justify-center rounded-md bg-muted">
+              <UploadCloud className="size-4.5 text-foreground" />
+            </div>
+            <p className="mt-3 text-sm font-semibold text-foreground">
+              Import from cloud storage
+            </p>
+            <p className="text-xs text-muted-foreground">(Coming soon)</p>
+          </div>
+        </div>
       </div>
 
       {stage.kind === "video-modal" && workspaceId && projectId && (
@@ -308,8 +391,10 @@ export function UploadPage() {
           }}
           workspaceId={workspaceId}
           projectId={projectId}
-          video={stage.video}
-          onExtractionComplete={(batchId) => setStage({ kind: "preview", batchId })}
+          file={stage.file}
+          batchName={batchName}
+          tagNames={tags}
+          onExtractionComplete={() => setStage({ kind: "saved", imageCount: 0 })}
           onSkip={() => setStage({ kind: "idle" })}
         />
       )}

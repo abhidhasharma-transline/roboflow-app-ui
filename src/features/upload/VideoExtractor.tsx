@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   Dialog,
   DialogContent,
@@ -9,29 +9,29 @@ import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
 import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
-import { ChevronUp, ChevronDown, X } from "lucide-react"
+import { ChevronUp, ChevronDown, X, GripVertical } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { triggerExtraction } from "@/lib/uploadApi"
+import { initiateVideoUpload, triggerExtraction } from "@/lib/uploadApi"
+import { samplingPresets } from "@/lib/videoSampling"
 import { useExtractionProgress } from "@/hooks/useExtractionProgress"
-import type { VideoInitiateResponse } from "@/types/upload"
 
 interface VideoExtractorProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   workspaceId: string
   projectId: string
-  video: VideoInitiateResponse
+  file: File
+  batchName: string
+  tagNames: string[]
   /** Called once extraction finishes successfully, with the batch to load. */
   onExtractionComplete: (batchId: string) => void
-  /** No backend call by design — the batch just stays empty until images are added another way. */
+  /** Nothing was ever uploaded at this point, so there's genuinely nothing to clean up. */
   onSkip: () => void
 }
 
-const FILMSTRIP_FRAME_COUNT = 12
-// We don't get an actual fps from the backend at this step, so frame-step
-// buttons use a reasonable approximation. Good enough for nudging the
-// playhead; not used for anything that affects the final extraction math.
+const FILMSTRIP_FRAME_COUNT = 18
 const ASSUMED_FPS = 30
+const MIN_RANGE_SECONDS = 0.5
 
 function formatTimestamp(seconds: number): string {
   const m = Math.floor(seconds / 60)
@@ -39,25 +39,54 @@ function formatTimestamp(seconds: number): string {
   return `${String(m).padStart(2, "0")}:${s.padStart(6, "0")}`
 }
 
+function formatRate(interval: number): string {
+  if (interval <= 0) return "—"
+  if (interval <= 1) {
+    const fps = 1 / interval
+    return `${Number.isInteger(fps) ? fps : fps.toFixed(1)} frames/second`
+  }
+  return `1 frame every ${interval < 10 ? interval.toFixed(2) : interval.toFixed(1)} seconds`
+}
+
 export function VideoExtractor({
   open,
   onOpenChange,
   workspaceId,
   projectId,
-  video,
+  file,
+  batchName,
+  tagNames,
   onExtractionComplete,
   onSkip,
 }: VideoExtractorProps) {
   const playerRef = useRef<HTMLVideoElement>(null)
-  // Callback-ref state instead of useRef: Radix Dialog renders its content
-  // through a Portal whose mount timing isn't synchronous with the first
-  // render commit, so a plain useRef can still be null when our effect first
-  // runs (and its dependency array never changes to trigger a retry). State
-  // updates from the ref callback force a re-render once the nodes are
-  // actually attached, which re-fires the effect below.
+  const filmstripRef = useRef<HTMLDivElement>(null)
+
+  // Never touches the network — a local, disposable URL pointing at the
+  // File already sitting in the browser's memory. Same-origin for canvas
+  // purposes, so no CORS setup is needed at all for thumbnail generation.
+  //
+  // Creation AND revocation live in the SAME effect (not useMemo-for-create
+  // + useEffect-for-cleanup) on purpose: React StrictMode's dev-mode
+  // mount→cleanup→mount simulation would otherwise revoke the URL that the
+  // component is actually displaying, since a URL created during the render
+  // phase (useMemo) is shared across both simulated mounts while the
+  // cleanup only runs once — killing the live URL before the video can load
+  // it (this is exactly what "Loading video…" forever + a failed blob:
+  // request with 0 bytes transferred means). Creating a fresh URL inside
+  // each effect invocation keeps the discarded first cycle's URL and the
+  // real second cycle's URL fully independent.
+  const [videoUrl, setVideoUrl] = useState<string | null>(null)
+  useEffect(() => {
+    const url = URL.createObjectURL(file)
+    setVideoUrl(url)
+    return () => URL.revokeObjectURL(url)
+  }, [file])
+
   const [thumbVideoEl, setThumbVideoEl] = useState<HTMLVideoElement | null>(null)
   const [canvasEl, setCanvasEl] = useState<HTMLCanvasElement | null>(null)
 
+  const [duration, setDuration] = useState(0)
   const [currentTime, setCurrentTime] = useState(0)
   const [filmstrip, setFilmstrip] = useState<string[]>([])
   const [filmstripStatus, setFilmstripStatus] = useState<"loading" | "ready" | "unavailable">(
@@ -66,33 +95,37 @@ export function VideoExtractor({
   const [manualOpen, setManualOpen] = useState(false)
   const [manualMarks, setManualMarks] = useState<number[]>([])
 
-  const minInterval = Math.min(...video.sampling_presets.map((p) => p.interval))
-  const maxInterval = Math.max(...video.sampling_presets.map((p) => p.interval))
-  const defaultPreset =
-    video.sampling_presets.find((p) => p.default) ?? video.sampling_presets[0]
+  const [rangeStart, setRangeStart] = useState(0)
+  const [rangeEnd, setRangeEnd] = useState(0)
+  const [draggingHandle, setDraggingHandle] = useState<"start" | "end" | null>(null)
 
-  const [frameInterval, setFrameInterval] = useState(defaultPreset?.interval ?? 1)
-  const [extracting, setExtracting] = useState(false)
+  const presets = useMemo(() => (duration > 0 ? samplingPresets(duration) : []), [duration])
+  const minInterval = presets.length ? Math.min(...presets.map((p) => p.interval)) : 1 / 60
+  const maxInterval = presets.length ? Math.max(...presets.map((p) => p.interval)) : 60
+
+  const [frameInterval, setFrameInterval] = useState(1)
+  const [phase, setPhase] = useState<"idle" | "uploading" | "extracting">("idle")
   const [videoUploadId, setVideoUploadId] = useState<string | null>(null)
+  const [committedBatchId, setCommittedBatchId] = useState<string | null>(null)
+  const [uploadError, setUploadError] = useState<string | null>(null)
 
   const { progress } = useExtractionProgress(workspaceId, projectId, videoUploadId)
 
-  // ── Generate filmstrip thumbnails once, off-screen, without touching the visible player ──
-  // Three ways this can legitimately fail:
-  //   1. Missing CORS headers on the video URL — "loadedmetadata"/"error" never fire as expected.
-  //   2. The canvas gets tainted (cross-origin frame the browser wasn't allowed to read) — toDataURL() throws.
-  //   3. A single seek() never completes (slow/partial range-request support) — the original
-  //      code awaited this with no timeout, which is the most likely cause of a permanent
-  //      "Generating preview…" hang. Every seek now races against a timeout.
+  // Once duration is known (native <video> metadata), initialize range/interval defaults.
   useEffect(() => {
-    if (!open || filmstrip.length > 0) {
-      return
+    if (duration > 0 && rangeEnd === 0) {
+      setRangeEnd(duration)
+      const def = samplingPresets(duration).find((p) => p.default)
+      if (def) setFrameInterval(def.interval)
     }
+  }, [duration, rangeEnd])
+
+  // ── Generate filmstrip thumbnails once, off-screen, without touching the visible player ──
+  useEffect(() => {
+    if (!open || duration === 0 || filmstrip.length > 0 || !videoUrl) return
     const thumbVideo = thumbVideoEl
     const canvas = canvasEl
-    if (!thumbVideo || !canvas) {
-      return
-    }
+    if (!thumbVideo || !canvas) return
 
     let cancelled = false
 
@@ -101,8 +134,6 @@ export function VideoExtractor({
       cancelled = true
       setFilmstripStatus("unavailable")
     }
-
-    const loadTimeout = window.setTimeout(() => giveUp(), 8000)
 
     function waitForSeek(t: number): Promise<boolean> {
       return new Promise((resolve) => {
@@ -122,14 +153,11 @@ export function VideoExtractor({
     }
 
     async function generate() {
-      window.clearTimeout(loadTimeout)
-      if (cancelled) return
-
       const ctx = canvas!.getContext("2d")
       if (!ctx) return giveUp()
 
       const results: string[] = []
-      const step = video.duration / (FILMSTRIP_FRAME_COUNT + 1)
+      const step = duration / (FILMSTRIP_FRAME_COUNT + 1)
 
       try {
         for (let i = 1; i <= FILMSTRIP_FRAME_COUNT; i++) {
@@ -137,9 +165,7 @@ export function VideoExtractor({
           const t = step * i
           const seeked = await waitForSeek(t)
           if (cancelled) return
-          if (!seeked) {
-            continue
-          }
+          if (!seeked) continue
           canvas!.width = 80
           canvas!.height = 56
           ctx.drawImage(thumbVideo!, 0, 0, 80, 56)
@@ -153,47 +179,45 @@ export function VideoExtractor({
             giveUp()
           }
         }
-      } catch (err) {
+      } catch {
         giveUp()
       }
     }
 
+    function onLoadedMetadata() {
+      generate()
+    }
     function onError() {
-      window.clearTimeout(loadTimeout)
       giveUp()
     }
 
-    thumbVideo.addEventListener("loadedmetadata", generate, { once: true })
+    // This is a SECOND, independent <video> element from the visible
+    // player above — it needs its own src and its own "is metadata ready"
+    // wait before we can start seeking it frame-by-frame.
+    thumbVideo.addEventListener("loadedmetadata", onLoadedMetadata, { once: true })
     thumbVideo.addEventListener("error", onError, { once: true })
-
-    // Set crossOrigin before src imperatively — JSX attribute ordering on
-    // <video> doesn't reliably guarantee crossOrigin applies before the
-    // browser starts fetching, which can otherwise taint the canvas even
-    // when CORS is configured correctly server-side.
-    thumbVideo.crossOrigin = "anonymous"
-    thumbVideo.src = video.video_url
+    thumbVideo.src = videoUrl
     thumbVideo.load()
 
     return () => {
       cancelled = true
-      window.clearTimeout(loadTimeout)
-      thumbVideo.removeEventListener("loadedmetadata", generate)
+      thumbVideo.removeEventListener("loadedmetadata", onLoadedMetadata)
       thumbVideo.removeEventListener("error", onError)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, video.duration, thumbVideoEl, canvasEl])
+  }, [open, duration, thumbVideoEl, canvasEl, filmstrip.length, videoUrl])
 
-
+  const trimmedDuration = Math.max(MIN_RANGE_SECONDS, rangeEnd - rangeStart)
   const outputCount =
-    frameInterval > 0 ? Math.max(1, Math.round(video.duration / frameInterval)) : 0
+    frameInterval > 0 ? Math.max(1, Math.round(trimmedDuration / frameInterval)) : 0
   const combinedCount = outputCount + manualMarks.length
 
   const sliderPosition = useMemo(() => {
+    if (!duration) return 0
     const logMin = Math.log(minInterval)
     const logMax = Math.log(maxInterval)
     const logVal = Math.log(Math.max(minInterval, Math.min(maxInterval, frameInterval)))
     return ((logVal - logMin) / (logMax - logMin)) * 100
-  }, [frameInterval, minInterval, maxInterval])
+  }, [frameInterval, minInterval, maxInterval, duration])
 
   function setPosition(position: number) {
     const logMin = Math.log(minInterval)
@@ -203,10 +227,38 @@ export function VideoExtractor({
   }
 
   function seekTo(t: number) {
-    const clamped = Math.max(0, Math.min(video.duration, t))
+    const clamped = Math.max(0, Math.min(duration, t))
     if (playerRef.current) playerRef.current.currentTime = clamped
     setCurrentTime(clamped)
   }
+
+  const handlePointerMove = useCallback(
+    (e: PointerEvent) => {
+      if (!draggingHandle || !filmstripRef.current || !duration) return
+      const rect = filmstripRef.current.getBoundingClientRect()
+      const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
+      const t = pct * duration
+      if (draggingHandle === "start") {
+        setRangeStart(Math.min(t, rangeEnd - MIN_RANGE_SECONDS))
+      } else {
+        setRangeEnd(Math.max(t, rangeStart + MIN_RANGE_SECONDS))
+      }
+    },
+    [draggingHandle, duration, rangeStart, rangeEnd]
+  )
+
+  useEffect(() => {
+    if (!draggingHandle) return
+    function onUp() {
+      setDraggingHandle(null)
+    }
+    window.addEventListener("pointermove", handlePointerMove)
+    window.addEventListener("pointerup", onUp)
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove)
+      window.removeEventListener("pointerup", onUp)
+    }
+  }, [draggingHandle, handlePointerMove])
 
   const isMarked = manualMarks.some((m) => Math.abs(m - currentTime) < 1 / ASSUMED_FPS / 2)
 
@@ -229,59 +281,68 @@ export function VideoExtractor({
     }
   }
 
+  // ── The actual commit point — nothing has touched the server before this. ──
   async function handleExtract() {
-    setExtracting(true)
+    setUploadError(null)
+    setPhase("uploading")
     try {
+      const initiated = await initiateVideoUpload(workspaceId, projectId, file, {
+        batchName,
+        tagNames,
+      })
+      setCommittedBatchId(initiated.batch_id)
+      setPhase("extracting")
       const res = await triggerExtraction(
         workspaceId,
         projectId,
-        video.video_upload_id,
+        initiated.video_upload_id,
         frameInterval,
-        manualMarks
+        manualMarks,
+        { start: rangeStart, end: rangeEnd }
       )
       setVideoUploadId(res.video_upload_id)
-    } catch {
-      setExtracting(false)
+    } catch (err) {
+      setPhase("idle")
+      setUploadError(extractErrorMessage(err))
     }
   }
 
   useEffect(() => {
-    if (progress?.status === "done") {
-      onExtractionComplete(video.batch_id)
+    if (progress?.status === "done" && committedBatchId) {
+      onExtractionComplete(committedBatchId)
     }
-  }, [progress?.status, onExtractionComplete, video.batch_id])
+  }, [progress?.status, committedBatchId, onExtractionComplete])
 
   return (
-    <Dialog open={open} onOpenChange={extracting ? undefined : onOpenChange}>
-      <DialogContent className="max-w-2xl gap-0 p-0 sm:max-w-2xl" showCloseButton={!extracting}>
+    <Dialog open={open} onOpenChange={phase !== "idle" ? undefined : onOpenChange}>
+      <DialogContent className="max-w-4xl gap-0 p-0 sm:max-w-4xl" showCloseButton={phase === "idle"}>
         <DialogHeader className="border-b border-border p-5 pb-4">
           <DialogTitle className="text-base">
-            Extract frames from {video.filename}{" "}
-            <span className="font-normal text-muted-foreground">
-              ({video.duration_label.replace(/^00:/, "")}s)
-            </span>
+            Extract frames from {file.name}
+            {duration > 0 && (
+              <span className="font-normal text-muted-foreground"> ({duration.toFixed(3)}s)</span>
+            )}
           </DialogTitle>
         </DialogHeader>
 
-        <div className="max-h-[75vh] overflow-y-auto p-5">
-          {/* Off-screen video used only to render filmstrip thumbnails onto the canvas.
-              src/crossOrigin are set imperatively in the effect above, not here. */}
+        <div className="max-h-[80vh] overflow-y-auto p-6">
           <video ref={setThumbVideoEl} muted className="hidden" />
           <canvas ref={setCanvasEl} className="hidden" />
 
-          {!extracting ? (
+          {phase === "idle" ? (
             <>
               <video
                 ref={playerRef}
-                src={video.video_url}
+                src={videoUrl ?? undefined}
                 controls
-                className="w-full rounded-lg bg-black"
+                className="aspect-video w-full rounded-lg bg-black"
+                onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
                 onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
               />
 
-              <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
+              <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
                 <span>
-                  {formatTimestamp(currentTime)} / {formatTimestamp(video.duration)}
+                  {formatTimestamp(currentTime)} / {formatTimestamp(duration)}
                 </span>
                 <button
                   onClick={() => setManualOpen((v) => !v)}
@@ -292,33 +353,86 @@ export function VideoExtractor({
                 </button>
               </div>
 
-              {/* Filmstrip with playhead + manual mark ticks */}
-              <div className="relative mt-2 flex h-14 overflow-hidden rounded-md border border-border bg-muted">
+              <div
+                ref={filmstripRef}
+                className="relative mt-2 flex h-16 overflow-hidden rounded-md border border-border bg-muted select-none"
+              >
                 {filmstripStatus === "loading" ? (
                   <div className="flex w-full items-center justify-center text-xs text-muted-foreground">
-                    Generating preview…
+                    {duration === 0 ? "Loading video…" : "Generating preview…"}
                   </div>
                 ) : filmstripStatus === "unavailable" ? (
                   <div className="flex w-full items-center justify-center text-xs text-muted-foreground">
                     Preview unavailable — use the player above and the controls below to pick frames.
                   </div>
                 ) : (
-                  filmstrip.map((src, i) => (
-                    <img key={i} src={src} className="h-full flex-1 object-cover" alt="" />
-                  ))
+                  <div className="flex w-full gap-px bg-border">
+                    {filmstrip.map((src, i) => (
+                      <img key={i} src={src} className="h-full flex-1 object-cover" alt="" />
+                    ))}
+                  </div>
                 )}
-                <div
-                  className="absolute top-0 h-full w-0.5 bg-brand"
-                  style={{ left: `${(currentTime / video.duration) * 100}%` }}
-                />
-                {manualMarks.map((m) => (
-                  <div
-                    key={m}
-                    className="absolute top-0 h-full w-0.5 bg-amber-400"
-                    style={{ left: `${(m / video.duration) * 100}%` }}
-                  />
-                ))}
+
+                {duration > 0 && (
+                  <>
+                    <div
+                      className="pointer-events-none absolute inset-y-0 left-0 bg-black/50"
+                      style={{ width: `${(rangeStart / duration) * 100}%` }}
+                    />
+                    <div
+                      className="pointer-events-none absolute inset-y-0 right-0 bg-black/50"
+                      style={{ width: `${100 - (rangeEnd / duration) * 100}%` }}
+                    />
+                    <div
+                      className="pointer-events-none absolute top-0 h-full w-0.5 bg-brand"
+                      style={{ left: `${(currentTime / duration) * 100}%` }}
+                    />
+                    {manualMarks.map((m) => (
+                      <div
+                        key={m}
+                        className="pointer-events-none absolute top-0 h-full w-0.5 bg-amber-400"
+                        style={{ left: `${(m / duration) * 100}%` }}
+                      />
+                    ))}
+                    <div
+                      onPointerDown={(e) => {
+                        e.preventDefault()
+                        setDraggingHandle("start")
+                      }}
+                      className="absolute top-0 z-10 flex h-full w-3 -translate-x-1/2 cursor-ew-resize items-center justify-center rounded bg-brand"
+                      style={{ left: `${(rangeStart / duration) * 100}%` }}
+                    >
+                      <GripVertical className="size-3 text-brand-foreground" />
+                    </div>
+                    <div
+                      onPointerDown={(e) => {
+                        e.preventDefault()
+                        setDraggingHandle("end")
+                      }}
+                      className="absolute top-0 z-10 flex h-full w-3 -translate-x-1/2 cursor-ew-resize items-center justify-center rounded bg-brand"
+                      style={{ left: `${(rangeEnd / duration) * 100}%` }}
+                    >
+                      <GripVertical className="size-3 text-brand-foreground" />
+                    </div>
+                  </>
+                )}
               </div>
+              {duration > 0 && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Sampling range: {formatTimestamp(rangeStart)} – {formatTimestamp(rangeEnd)}
+                  {(rangeStart > 0 || rangeEnd < duration) && (
+                    <button
+                      className="ml-2 text-brand hover:underline"
+                      onClick={() => {
+                        setRangeStart(0)
+                        setRangeEnd(duration)
+                      }}
+                    >
+                      Reset
+                    </button>
+                  )}
+                </p>
+              )}
 
               {manualOpen && (
                 <div className="mt-3 rounded-lg border border-border p-3">
@@ -383,29 +497,49 @@ export function VideoExtractor({
               )}
 
               <div className="mt-4 rounded-lg border border-border p-4">
-                <p className="mb-3 text-sm font-semibold text-foreground">How should we sample the video?</p>
-                <div className="mb-3 flex items-center justify-between text-xs">
-                  {video.sampling_presets.map((preset) => (
-                    <button
-                      key={preset.label}
-                      onClick={() => setFrameInterval(preset.interval)}
-                      className={cn(
-                        "rounded-md px-2.5 py-1.5 font-medium transition-colors",
-                        Math.abs(preset.interval - frameInterval) < 1e-6
-                          ? "bg-brand text-brand-foreground"
-                          : "bg-muted text-muted-foreground hover:bg-accent"
-                      )}
-                    >
-                      {preset.label}
-                    </button>
-                  ))}
+                <p className="mb-4 text-sm font-semibold text-foreground">How should we sample the video?</p>
+
+                <div className="relative mb-2 flex items-center justify-between text-xs">
+                  <button
+                    onClick={() => setFrameInterval(minInterval)}
+                    className={cn(
+                      "rounded-md px-2.5 py-1.5 font-medium transition-colors",
+                      Math.abs(minInterval - frameInterval) < 1e-6
+                        ? "bg-brand text-brand-foreground"
+                        : "bg-muted text-muted-foreground hover:bg-accent"
+                    )}
+                  >
+                    {presets.find((p) => p.interval === minInterval)?.label ?? "Fastest"}
+                  </button>
+                  <button
+                    onClick={() => setFrameInterval(maxInterval)}
+                    className={cn(
+                      "rounded-md px-2.5 py-1.5 font-medium transition-colors",
+                      Math.abs(maxInterval - frameInterval) < 1e-6
+                        ? "bg-brand text-brand-foreground"
+                        : "bg-muted text-muted-foreground hover:bg-accent"
+                    )}
+                  >
+                    {presets.find((p) => p.interval === maxInterval)?.label ?? "Slowest"}
+                  </button>
                 </div>
+
+                <div className="relative h-7">
+                  <span
+                    className="absolute top-0 -translate-x-1/2 rounded-md bg-brand px-2.5 py-1 text-xs font-medium whitespace-nowrap text-brand-foreground"
+                    style={{ left: `${sliderPosition}%` }}
+                  >
+                    {formatRate(frameInterval)}
+                  </span>
+                </div>
+
                 <Slider
                   value={[sliderPosition]}
                   onValueChange={([v]) => setPosition(v)}
                   min={0}
                   max={100}
                   step={0.1}
+                  disabled={duration === 0}
                 />
                 <div className="mt-4 flex items-center gap-2 text-sm text-foreground">
                   Output 1 frame every
@@ -429,14 +563,24 @@ export function VideoExtractor({
                     value={outputCount}
                     onChange={(e) => {
                       const count = Math.max(1, Number(e.target.value) || 1)
-                      setFrameInterval(video.duration / count)
+                      setFrameInterval(trimmedDuration / count)
                     }}
                     className="h-8 w-20"
                   />
                   images)
                 </div>
               </div>
+
+              {uploadError && <p className="mt-3 text-sm text-destructive">{uploadError}</p>}
             </>
+          ) : phase === "uploading" ? (
+            <div className="flex flex-col items-center justify-center gap-4 py-10 text-center">
+              <p className="text-sm font-medium text-foreground">Uploading video…</p>
+              <p className="text-xs text-muted-foreground">
+                This is the first time this file touches the server — nothing was
+                uploaded while you were previewing it.
+              </p>
+            </div>
           ) : (
             <div className="flex flex-col items-center justify-center gap-4 py-10 text-center">
               <p className="text-sm font-medium text-foreground">
@@ -455,12 +599,12 @@ export function VideoExtractor({
           )}
         </div>
 
-        {!extracting && (
+        {phase === "idle" && (
           <div className="flex items-center justify-between border-t border-border p-4">
             <Button variant="outline" onClick={onSkip}>
               Skip Video
             </Button>
-            <Button variant="brand" onClick={handleExtract}>
+            <Button variant="brand" onClick={handleExtract} disabled={duration === 0}>
               Extract {combinedCount} Frame{combinedCount !== 1 && "s"}
             </Button>
           </div>
@@ -468,4 +612,13 @@ export function VideoExtractor({
       </DialogContent>
     </Dialog>
   )
+}
+
+function extractErrorMessage(err: unknown): string {
+  if (typeof err === "object" && err !== null && "response" in err) {
+    const resp = (err as { response?: { data?: { detail?: unknown } } }).response
+    const detail = resp?.data?.detail
+    if (typeof detail === "string") return detail
+  }
+  return "Upload failed — please try again."
 }

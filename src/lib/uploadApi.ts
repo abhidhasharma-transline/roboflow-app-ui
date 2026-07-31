@@ -72,7 +72,8 @@ export async function triggerExtraction(
   projectId: string,
   videoUploadId: string,
   frameInterval: number,
-  manualMarks: number[]
+  manualMarks: number[],
+  range?: { start: number; end: number }
 ): Promise<TriggerExtractionResponse> {
   const res = await api.post<TriggerExtractionResponse>(
     `${uploadBase(workspaceId, projectId)}/video/extract`,
@@ -80,6 +81,11 @@ export async function triggerExtraction(
       video_upload_id: videoUploadId,
       frame_interval: frameInterval,
       manual_marks: manualMarks,
+      // Optional — only meaningful once the backend's ExtractConfig accepts
+      // range_start/range_end and the Celery task applies them (e.g. via
+      // ffmpeg -ss/-to before the fps filter). Omit if not yet supported.
+      range_start: range?.start,
+      range_end: range?.end,
     }
   )
   return res.data
