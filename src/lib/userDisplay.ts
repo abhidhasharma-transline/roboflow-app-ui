@@ -11,3 +11,14 @@ export function initials(user: Pick<User, "first_name" | "last_name" | "username
   if (first && last) return `${first}${last}`.toUpperCase()
   return user.username.slice(0, 2).toUpperCase()
 }
+
+const ROLE_LABELS: Record<string, string> = {
+  super_admin: "Super Admin",
+  admin: "Admin",
+  labeler: "Labeler",
+  reviewer: "Reviewer",
+}
+
+export function roleLabel(role: string): string {
+  return ROLE_LABELS[role] ?? role
+}

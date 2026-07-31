@@ -1,13 +1,22 @@
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useParams, Link } from "react-router-dom"
-import { ArrowLeft, Plus, Search } from "lucide-react"
+import { ArrowLeft, Plus, Search, ArrowUpDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "@/components/ui/select"
 import { ProjectCard } from "@/components/shared/ProjectCard"
 import { CreateProjectDialog } from "./CreateProjectDialog"
 import { listProjects, getFolder } from "@/lib/projectApi"
 import { useWorkspaceStore } from "@/stores/workspaceStore"
 import type { Project, ProjectFolder } from "@/types/project"
+
+type SortOrder = "newest" | "oldest" | "name"
 
 export function FolderProjectsPage() {
   const { folderId } = useParams<{ folderId: string }>()
@@ -16,7 +25,20 @@ export function FolderProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [search, setSearch] = useState("")
+  const [sortOrder, setSortOrder] = useState<SortOrder>("newest")
   const [dialogOpen, setDialogOpen] = useState(false)
+
+  const sortedProjects = useMemo(() => {
+    const sorted = [...projects]
+    if (sortOrder === "newest") {
+      sorted.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    } else if (sortOrder === "oldest") {
+      sorted.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+    } else {
+      sorted.sort((a, b) => a.name.localeCompare(b.name))
+    }
+    return sorted
+  }, [projects, sortOrder])
 
   function refetch() {
     if (!workspaceId || !folderId) return
@@ -55,14 +77,27 @@ export function FolderProjectsPage() {
       </h1>
 
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-        <div className="relative w-72">
-          <Search className="absolute top-2.5 left-2.5 size-4 text-muted-foreground" />
-          <Input
-            placeholder="Search projects"
-            className="pl-8"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+        <div className="flex items-center gap-2">
+          <div className="relative w-72">
+            <Search className="absolute top-2.5 left-2.5 size-4 text-muted-foreground" />
+            <Input
+              placeholder="Search projects"
+              className="pl-8"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+          <Select value={sortOrder} onValueChange={(v) => setSortOrder(v as SortOrder)}>
+            <SelectTrigger className="w-44">
+              <ArrowUpDown className="size-3.5 text-muted-foreground" />
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="newest">Newest first</SelectItem>
+              <SelectItem value="oldest">Oldest first</SelectItem>
+              <SelectItem value="name">Name (A–Z)</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
         <Button variant="brand" onClick={() => setDialogOpen(true)}>
           <Plus className="size-4" />
@@ -88,15 +123,11 @@ export function FolderProjectsPage() {
                 All Projects
               </Link>
             </Button>
-            <Button variant="brand" onClick={() => setDialogOpen(true)}>
-              <Plus className="size-4" />
-              New Project
-            </Button>
           </div>
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {projects.map((project) => (
+          {sortedProjects.map((project) => (
             <ProjectCard key={project.id} project={project} />
           ))}
         </div>

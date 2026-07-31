@@ -56,7 +56,7 @@ export function ProjectSidebar() {
   ]
 
   return (
-    <aside className="flex h-screen w-56 shrink-0 flex-col overflow-y-auto border-r border-sidebar-border bg-sidebar">
+    <aside className="flex h-full w-56 shrink-0 flex-col overflow-y-auto border-r border-sidebar-border bg-sidebar">
       <div className="p-3 pb-2">
         <Link
           to="/projects"

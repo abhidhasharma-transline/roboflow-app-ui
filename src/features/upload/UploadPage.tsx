@@ -6,16 +6,12 @@ import {
   BoxSelect,
   Video,
   FileText,
-  Smartphone,
-  Compass,
-  UploadCloud,
   CheckCircle2,
   AlertTriangle,
   X,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import { Progress } from "@/components/ui/progress"
 import { TagInput } from "@/components/shared/TagInput"
@@ -81,7 +77,6 @@ export function UploadPage() {
 
   const [batchName, setBatchName] = useState(defaultBatchName)
   const [tags, setTags] = useState<string[]>([])
-  const [createInstantly, setCreateInstantly] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
   const [stage, setStage] = useState<Stage>({ kind: "idle" })
   const [rowErrors, setRowErrors] = useState<UploadImagesResponse["errors"]>([])
@@ -123,11 +118,9 @@ export function UploadPage() {
 
     if (imageFiles.length === 0) return
 
-    if (createInstantly) {
-      commitImages(imageFiles, folderName)
-    } else {
-      setStage({ kind: "selected", files: imageFiles, folderName })
-    }
+    // Always hold files locally for review first — nothing touches MinIO/DB
+    // until the user explicitly clicks "Save and Continue".
+    setStage({ kind: "selected", files: imageFiles, folderName })
   }
 
   function onDrop(e: React.DragEvent) {
@@ -153,7 +146,7 @@ export function UploadPage() {
         Upload Data
       </h1>
 
-      <div className="grid grid-cols-1 gap-8 lg:grid-cols-[1fr_320px]">
+      <div className="max-w-3xl">
         <div>
           <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
@@ -169,15 +162,6 @@ export function UploadPage() {
               <TagInput value={tags} onChange={setTags} />
             </div>
           </div>
-
-          <label className="mb-4 flex items-center gap-2 text-sm text-foreground">
-            <Checkbox
-              checked={createInstantly}
-              onCheckedChange={(v) => setCreateInstantly(v === true)}
-              disabled={isBusy || stage.kind === "selected"}
-            />
-            Create batch instantly (skip review, upload as soon as files are picked)
-          </label>
 
           {stage.kind === "saved" ? (
             <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-12 text-center">
@@ -196,7 +180,8 @@ export function UploadPage() {
             <div>
               <div className="mb-4 flex items-center justify-between">
                 <p className="text-sm text-muted-foreground">
-                  {stage.files.length} image{stage.files.length !== 1 && "s"} ready to upload
+                  {stage.files.length} image{stage.files.length !== 1 && "s"} ready to upload —
+                  nothing has been sent to the server yet.
                 </p>
                 <div className="flex gap-2">
                   <Button variant="outline" onClick={resetToIdle}>
@@ -337,49 +322,6 @@ export function UploadPage() {
               </ul>
             </div>
           )}
-        </div>
-
-        {/* Right rail — informational only, not wired to a backend yet */}
-        <div className="flex flex-col gap-4">
-          <p className="text-sm font-semibold text-foreground">
-            Need images to get started?
-          </p>
-
-          <div className="rounded-lg border border-border p-4 opacity-60">
-            <div className="mb-3 flex size-9 items-center justify-center rounded-md bg-muted">
-              <Smartphone className="size-4.5 text-foreground" />
-            </div>
-            <p className="mb-1 text-sm font-semibold text-foreground">
-              Upload data from your phone
-            </p>
-            <p className="text-xs text-muted-foreground">
-              Scan a QR code to upload images and videos from your phone
-              directly to your project. (Coming soon)
-            </p>
-          </div>
-
-          <div className="rounded-lg border border-border p-4 opacity-60">
-            <div className="mb-3 flex size-9 items-center justify-center rounded-md bg-muted">
-              <Compass className="size-4.5 text-foreground" />
-            </div>
-            <p className="mb-1 text-sm font-semibold text-foreground">
-              Search public datasets
-            </p>
-            <p className="mb-3 text-xs text-muted-foreground">
-              (Coming soon)
-            </p>
-            <Input placeholder="Search for images" disabled />
-          </div>
-
-          <div className="rounded-lg border border-border p-4 opacity-60">
-            <div className="flex size-9 items-center justify-center rounded-md bg-muted">
-              <UploadCloud className="size-4.5 text-foreground" />
-            </div>
-            <p className="mt-3 text-sm font-semibold text-foreground">
-              Import from cloud storage
-            </p>
-            <p className="text-xs text-muted-foreground">(Coming soon)</p>
-          </div>
         </div>
       </div>
 
