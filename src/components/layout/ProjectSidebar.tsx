@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { NavLink, useParams, Link } from "react-router-dom"
+import { NavLink, useParams, Link, useNavigate } from "react-router-dom"
 import {
   ArrowLeft,
   ChevronDown,
@@ -14,10 +14,31 @@ import {
   Wand2,
   ListChecks,
   MoreVertical,
+  Copy,
+  Pencil,
+  Trash2,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { useProject } from "@/hooks/useProjects"
 import { useActiveWorkspace } from "@/hooks/useActiveWorkspace"
+import { useWorkspaceStore } from "@/stores/workspaceStore"
+import { renameProject, deleteProject } from "@/lib/projectApi"
 
 interface SubNavItem {
   label: string
@@ -30,10 +51,56 @@ interface SubNavItem {
 
 export function ProjectSidebar() {
   const { projectId } = useParams()
-  const { project } = useProject(projectId)
+  const navigate = useNavigate()
+  const workspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
+  const { project, refetch } = useProject(projectId)
   const { name: workspaceName } = useActiveWorkspace()
   const [dataOpen, setDataOpen] = useState(true)
   const [modelsOpen, setModelsOpen] = useState(true)
+
+  const [renameOpen, setRenameOpen] = useState(false)
+  const [renameValue, setRenameValue] = useState("")
+  const [renameSaving, setRenameSaving] = useState(false)
+  const [renameError, setRenameError] = useState<string | null>(null)
+
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  function openRename() {
+    setRenameValue(project?.name ?? "")
+    setRenameError(null)
+    setRenameOpen(true)
+  }
+
+  async function handleRename(e: React.FormEvent) {
+    e.preventDefault()
+    if (!workspaceId || !projectId || !renameValue.trim()) return
+    setRenameSaving(true)
+    setRenameError(null)
+    try {
+      await renameProject(workspaceId, projectId, renameValue.trim())
+      refetch()
+      setRenameOpen(false)
+    } catch (err) {
+      setRenameError(extractErrorMessage(err))
+    } finally {
+      setRenameSaving(false)
+    }
+  }
+
+  async function handleDelete() {
+    if (!workspaceId || !projectId) return
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await deleteProject(workspaceId, projectId)
+      navigate("/projects")
+    } catch (err) {
+      setDeleteError(extractErrorMessage(err))
+      setDeleting(false)
+    }
+  }
 
   const dataItems: SubNavItem[] = [
     { label: "Upload Data", icon: Upload, path: `/projects/${projectId}/upload` },
@@ -56,6 +123,7 @@ export function ProjectSidebar() {
   ]
 
   return (
+    <>
     <aside className="flex h-full w-56 shrink-0 flex-col overflow-y-auto border-r border-sidebar-border bg-sidebar">
       <div className="p-3 pb-2">
         <Link
@@ -76,9 +144,30 @@ export function ProjectSidebar() {
           <p className="truncate text-sm font-semibold text-sidebar-foreground">
             {project?.name ?? "Loading…"}
           </p>
-          <button className="shrink-0 rounded p-0.5 text-sidebar-muted hover:bg-sidebar-accent">
-            <MoreVertical className="size-4" />
-          </button>
+          <DropdownMenu>
+            <DropdownMenuTrigger className="shrink-0 rounded p-0.5 text-sidebar-muted hover:bg-sidebar-accent">
+              <MoreVertical className="size-4" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuItem
+                onClick={() => projectId && navigator.clipboard.writeText(projectId)}
+              >
+                <Copy className="size-4" />
+                Copy Project ID
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={openRename}>
+                <Pencil className="size-4" />
+                Rename Project
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => setDeleteOpen(true)}
+                variant="destructive"
+              >
+                <Trash2 className="size-4" />
+                Move to Trash
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
@@ -130,6 +219,58 @@ export function ProjectSidebar() {
         )}
       </div>
     </aside>
+
+    <Dialog open={renameOpen} onOpenChange={renameSaving ? undefined : setRenameOpen}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Rename project</DialogTitle>
+          <DialogDescription>Choose a new name for this project.</DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleRename} className="flex flex-col gap-4">
+          <Input
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            autoFocus
+            required
+          />
+          {renameError && <p className="text-sm text-destructive">{renameError}</p>}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setRenameOpen(false)}
+              disabled={renameSaving}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" variant="brand" disabled={renameSaving || !renameValue.trim()}>
+              {renameSaving ? "Saving…" : "Save"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog open={deleteOpen} onOpenChange={deleting ? undefined : setDeleteOpen}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Move "{project?.name}" to trash?</DialogTitle>
+          <DialogDescription>
+            This removes the project from your workspace. This can't be undone from here.
+          </DialogDescription>
+        </DialogHeader>
+        {deleteError && <p className="text-sm text-destructive">{deleteError}</p>}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setDeleteOpen(false)} disabled={deleting}>
+            Cancel
+          </Button>
+          <Button variant="destructive" onClick={handleDelete} disabled={deleting}>
+            {deleting ? "Moving…" : "Move to Trash"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    </>
   )
 }
 
@@ -171,4 +312,13 @@ function SubNavLink({ item }: { item: SubNavItem }) {
       )}
     </NavLink>
   )
+}
+
+function extractErrorMessage(err: unknown): string {
+  if (typeof err === "object" && err !== null && "response" in err) {
+    const resp = (err as { response?: { data?: { detail?: unknown } } }).response
+    const detail = resp?.data?.detail
+    if (typeof detail === "string") return detail
+  }
+  return "Something went wrong — please try again."
 }

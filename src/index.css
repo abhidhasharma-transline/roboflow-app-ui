@@ -53,6 +53,15 @@
   --rail-foreground: oklch(0.65 0.01 280);
   --rail-accent: oklch(0.5 0.24 292);
   --rail-accent-foreground: oklch(0.99 0 0);
+
+  /* Top bar — deliberately dark against the light sidebar/content, so the
+     app doesn't read as an all-white admin template. Same hue family as
+     --rail, slightly deeper. */
+  --topbar: oklch(0.16 0.02 280);
+  --topbar-foreground: oklch(0.96 0 0);
+  --topbar-muted: oklch(0.68 0.01 280);
+  --topbar-border: oklch(0.26 0.02 280);
+  --topbar-accent: oklch(0.24 0.03 280);
 }
 
 .dark {
@@ -120,6 +129,12 @@
   --color-rail-foreground: var(--rail-foreground);
   --color-rail-accent: var(--rail-accent);
   --color-rail-accent-foreground: var(--rail-accent-foreground);
+
+  --color-topbar: var(--topbar);
+  --color-topbar-foreground: var(--topbar-foreground);
+  --color-topbar-muted: var(--topbar-muted);
+  --color-topbar-border: var(--topbar-border);
+  --color-topbar-accent: var(--topbar-accent);
 
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);

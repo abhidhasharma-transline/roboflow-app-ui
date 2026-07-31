@@ -146,7 +146,7 @@ export function UploadPage() {
         Upload Data
       </h1>
 
-      <div className="max-w-3xl">
+      <div className="mx-auto max-w-3xl">
         <div>
           <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">

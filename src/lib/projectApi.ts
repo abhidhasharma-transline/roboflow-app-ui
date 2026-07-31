@@ -26,6 +26,22 @@ export async function getProject(workspaceId: string, projectId: string): Promis
   return res.data
 }
 
+/** Requires a backend PATCH /workspaces/{workspace_id}/projects/{project_id} endpoint. */
+export async function renameProject(
+  workspaceId: string,
+  projectId: string,
+  name: string
+): Promise<Project> {
+  const res = await api.patch<Project>(`${base(workspaceId)}/projects/${projectId}`, { name })
+  return res.data
+}
+
+/** Requires a backend DELETE /workspaces/{workspace_id}/projects/{project_id} endpoint (soft-delete). */
+export async function deleteProject(workspaceId: string, projectId: string): Promise<{ message: string }> {
+  const res = await api.delete<{ message: string }>(`${base(workspaceId)}/projects/${projectId}`)
+  return res.data
+}
+
 export async function createProject(
   workspaceId: string,
   payload: {

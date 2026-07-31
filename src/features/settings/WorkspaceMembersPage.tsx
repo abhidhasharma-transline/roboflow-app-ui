@@ -11,6 +11,7 @@ import {
   cancelInvitation,
 } from "@/lib/workspaceApi"
 import { InviteMemberDialog } from "@/features/workspace/InviteMemberDialog"
+import { initials } from "@/lib/userDisplay"
 import type { Workspace, WorkspaceMember, WorkspaceInvitation } from "@/types/workspace"
 
 export function WorkspaceMembersPage() {
@@ -27,6 +28,9 @@ export function WorkspaceMembersPage() {
     Promise.all([
       getWorkspace(workspaceId),
       listWorkspaceMembers(workspaceId),
+      // Owner-only on the backend — a 403 here just means "not the owner",
+      // not a real error, so the pending-invites section is hidden rather
+      // than shown as broken.
       listWorkspaceInvitations(workspaceId).catch(() => null),
     ])
       .then(([ws, mem, invites]) => {
@@ -45,7 +49,7 @@ export function WorkspaceMembersPage() {
     setPendingInvites((prev) => prev?.filter((i) => i.id !== invitationId) ?? prev)
   }
 
-  const isOwner = pendingInvites !== null
+  const isOwner = pendingInvites !== null // we could only fetch it if we're the owner
 
   return (
     <div className="flex-1 overflow-y-auto p-8">
@@ -131,7 +135,7 @@ export function WorkspaceMembersPage() {
                       <div className="flex items-center gap-2.5">
                         <Avatar className="size-7">
                           <AvatarFallback className="bg-brand/15 text-xs text-brand">
-                            {m.username.slice(0, 2).toUpperCase()}
+                            {initials(m)}
                           </AvatarFallback>
                         </Avatar>
                         <div>

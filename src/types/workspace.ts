@@ -20,11 +20,15 @@ export interface WorkspaceMember {
   user_id: string
   email: string
   username: string
+  first_name?: string
+  last_name?: string
   joined_at: string
 }
 
 export type InvitationStatus = "pending" | "accepted" | "rejected" | "expired"
 
+// Mirrors WorkspaceInvitationResponse — a workspace's outgoing invitations
+// (used on the owner's Team Members page, "Pending" list).
 export interface WorkspaceInvitation {
   id: string
   email: string
@@ -34,6 +38,8 @@ export interface WorkspaceInvitation {
   expires_at: string
 }
 
+// Mirrors MyInvitationResponse — invitations *sent to* the current user,
+// waiting for them to accept/reject.
 export interface MyInvitation {
   id: string
   workspace_id: string

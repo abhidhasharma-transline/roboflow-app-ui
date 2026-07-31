@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { useAuthStore } from "@/stores/authStore"
 import { fullName, initials, roleLabel } from "@/lib/userDisplay"
-import { Logo } from "./Logo"
+import { LogoMark } from "./Logo"
 
 interface TopbarProps {
   /** Breadcrumb or page title content, rendered on the left, after the logo. */
@@ -22,17 +22,18 @@ export function Topbar({ children }: TopbarProps) {
   const { user, logout } = useAuthStore()
 
   return (
-    <header className="flex h-16 w-full shrink-0 items-center justify-between border-b border-border bg-background px-6">
-    {/* <header className="flex h-16 w-full items-center justify-between bg-[#243248] border-b border-slate-700 text-white px-6">
-    <header className=" flex h-16 items-center justify-between bg-gradient-to-r from-[#211B45] to-[#171327] border-b border-violet-900 text-white px-6"> */}
+    <header className="flex h-16 w-full shrink-0 items-center justify-between border-b border-topbar-border bg-topbar px-6 text-topbar-foreground">
       <div className="flex items-center gap-4">
-        <Link to="/projects">
-          <Logo />
+        <Link to="/projects" className="flex items-center gap-2">
+          <LogoMark />
+          <span className="text-lg font-semibold tracking-tight text-topbar-foreground">
+            annomaster
+          </span>
         </Link>
         {children && (
           <>
-            <div className="h-6 w-px bg-border" />
-            <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+            <div className="h-6 w-px bg-topbar-border" />
+            <div className="flex items-center gap-2 text-sm font-medium text-topbar-foreground">
               {children}
             </div>
           </>
@@ -40,24 +41,24 @@ export function Topbar({ children }: TopbarProps) {
       </div>
 
       <div className="flex items-center gap-4">
-        <button className="relative flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
+        <button className="relative flex size-9 items-center justify-center rounded-full text-topbar-muted transition-colors hover:bg-topbar-accent hover:text-topbar-foreground">
           <Bell className="size-[18px]" />
         </button>
 
-        <div className="h-8 w-px bg-border" />
+        <div className="h-8 w-px bg-topbar-border" />
 
         <DropdownMenu>
-          <DropdownMenuTrigger className="flex items-center gap-2.5 rounded-full py-1 pr-1 pl-2 hover:bg-accent">
+          <DropdownMenuTrigger className="flex items-center gap-2.5 rounded-full py-1 pr-1 pl-2 hover:bg-topbar-accent">
             <div className="text-right leading-tight">
-              <p className="text-sm font-semibold text-foreground">
+              <p className="text-sm font-semibold text-topbar-foreground">
                 {user ? fullName(user) : ""}
               </p>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-topbar-muted">
                 {user ? roleLabel(user.role) : ""}
               </p>
             </div>
             <Avatar className="size-9">
-              <AvatarFallback className="bg-brand/15 text-sm font-medium text-brand">
+              <AvatarFallback className="bg-brand text-sm font-medium text-brand-foreground">
                 {user ? initials(user) : "U"}
               </AvatarFallback>
             </Avatar>

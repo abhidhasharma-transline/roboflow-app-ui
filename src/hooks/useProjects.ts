@@ -27,14 +27,16 @@ export function useProject(projectId: string | undefined) {
   const [project, setProject] = useState<Project | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
-  useEffect(() => {
+  function refetch() {
     if (!projectId || !workspaceId) return
     setIsLoading(true)
     getProject(workspaceId, projectId)
       .then(setProject)
       .catch(() => setProject(null))
       .finally(() => setIsLoading(false))
-  }, [projectId, workspaceId])
+  }
 
-  return { project, isLoading }
+  useEffect(refetch, [projectId, workspaceId])
+
+  return { project, isLoading, refetch }
 }

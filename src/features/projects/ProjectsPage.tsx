@@ -18,6 +18,7 @@ import { CreateProjectDialog } from "./CreateProjectDialog"
 import { listProjects, listFolders } from "@/lib/projectApi"
 import { getWorkspace, listWorkspaceMembers } from "@/lib/workspaceApi"
 import { useWorkspaceStore } from "@/stores/workspaceStore"
+import { initials } from "@/lib/userDisplay"
 import type { Project, ProjectFolder } from "@/types/project"
 import type { Workspace, WorkspaceMember } from "@/types/workspace"
 
@@ -97,7 +98,7 @@ export function ProjectsPage() {
             {members.slice(0, 4).map((m) => (
               <Avatar key={m.id} className="size-8 border-2 border-background">
                 <AvatarFallback className="bg-brand/15 text-xs text-brand">
-                  {m.username.slice(0, 2).toUpperCase()}
+                  {initials(m)}
                 </AvatarFallback>
               </Avatar>
             ))}

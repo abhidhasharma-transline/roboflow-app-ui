@@ -24,6 +24,11 @@ export function WorkspaceSwitcher({ collapsed }: { collapsed?: boolean }) {
       .catch(() => {})
   }, [])
 
+  // Belt-and-suspenders: if the store's cached name is missing for any
+  // reason, fall back to whatever this component's own fetch found.
+  const displayName =
+    activeWorkspaceName ?? workspaces.find((w) => w.id === activeWorkspaceId)?.name ?? "Loading…"
+
   function selectWorkspace(ws: Workspace) {
     if (ws.id !== activeWorkspaceId) {
       setActiveWorkspace(ws.id, ws.name)
@@ -45,7 +50,7 @@ export function WorkspaceSwitcher({ collapsed }: { collapsed?: boolean }) {
           <button className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left hover:bg-sidebar-accent">
             <div className="flex-1 overflow-hidden">
               <p className="truncate text-sm font-medium text-sidebar-foreground">
-                {activeWorkspaceName ?? "Loading…"}
+                {displayName}
               </p>
             </div>
             <ChevronsUpDown className="size-4 shrink-0 text-sidebar-muted" />

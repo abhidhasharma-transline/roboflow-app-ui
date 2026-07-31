@@ -18,7 +18,7 @@ import { AccountSettingsPage } from "@/features/settings/AccountSettingsPage"
 import { WorkspaceMembersPage } from "@/features/settings/WorkspaceMembersPage"
 import { InvitationAcceptPage } from "@/features/workspace/InvitationAcceptPage"
 import { useAuthStore } from "@/stores/authStore"
-import { useDefaultWorkspace } from "@/hooks/usedefaultworkspace"
+import { useDefaultWorkspace } from "@/hooks/useDefaultWorkspace"
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isHydrating, hydrate } = useAuthStore()

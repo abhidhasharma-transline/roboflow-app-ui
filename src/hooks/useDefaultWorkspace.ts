@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react"
-import { listWorkspaces } from "@/lib/workspaceApi"
+import { listWorkspaces, getWorkspace } from "@/lib/workspaceApi"
 import { useWorkspaceStore } from "@/stores/workspaceStore"
 import { useAuthStore } from "@/stores/authStore"
 
@@ -21,11 +21,24 @@ export function useDefaultWorkspace() {
     attempted.current = true
 
     listWorkspaces()
-      .then((workspaces) => {
+      .then(async (workspaces) => {
         if (workspaces.length === 0) return
         const owned = workspaces.find((w) => w.owner_id === user.id)
         const target = owned ?? workspaces[0]
-        setActiveWorkspace(target.id, target.name)
+
+        // The list endpoint doesn't always include `name` on each item —
+        // fall back to the single-workspace GET (which does) rather than
+        // leaving the sidebar stuck on "Loading…" forever.
+        if (target.name) {
+          setActiveWorkspace(target.id, target.name)
+        } else {
+          try {
+            const full = await getWorkspace(target.id)
+            setActiveWorkspace(full.id, full.name)
+          } catch {
+            setActiveWorkspace(target.id)
+          }
+        }
       })
       .catch(() => {
         // Silent — pages that need a workspace already show their own
