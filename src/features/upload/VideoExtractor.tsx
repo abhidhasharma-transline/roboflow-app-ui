@@ -574,16 +574,15 @@ export function VideoExtractor({
               {uploadError && <p className="mt-3 text-sm text-destructive">{uploadError}</p>}
             </>
           ) : phase === "uploading" ? (
-            <div className="flex flex-col items-center justify-center gap-4 py-10 text-center">
-              <p className="text-sm font-medium text-foreground">Uploading video…</p>
-              <p className="text-xs text-muted-foreground">
-                This is the first time this file touches the server — nothing was
-                uploaded while you were previewing it.
-              </p>
+            <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+              <p className="text-lg font-semibold text-brand">Processing files…</p>
+              <p className="font-mono text-xs text-muted-foreground">{file.name}</p>
+              <Progress value={0} className="w-full max-w-sm" />
             </div>
           ) : (
-            <div className="flex flex-col items-center justify-center gap-4 py-10 text-center">
-              <p className="text-sm font-medium text-foreground">
+            <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+              <p className="text-lg font-semibold text-brand">Processing files…</p>
+              <p className="font-mono text-xs text-muted-foreground">
                 {progress?.message ?? "Starting extraction…"}
               </p>
               <Progress value={progress?.percent ?? 0} className="w-full max-w-sm" />

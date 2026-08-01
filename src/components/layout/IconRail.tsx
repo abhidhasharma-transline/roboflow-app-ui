@@ -1,4 +1,4 @@
-import { NavLink } from "react-router-dom"
+import { GuardedNavLink as NavLink } from "./GuardedNavLink"
 import {
   Bot,
   FolderKanban,
