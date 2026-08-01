@@ -1,4 +1,4 @@
-import { NavLink, useNavigate } from "react-router-dom"
+import { NavLink } from "react-router-dom"
 import {
   Bot,
   FolderKanban,
@@ -10,32 +10,18 @@ import {
   Compass,
   Settings,
   Bell,
-  ChevronsUpDown,
   ChevronRight,
-  UserCog,
-  LogOut,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { Logo, LogoMark } from "./Logo"
-import { CreditsWidget } from "./CreditsWidget"
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-  DropdownMenuSeparator,
-} from "@/components/ui/dropdown-menu"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { useAuthStore } from "@/stores/authStore"
-import { fullName, initials as computeInitials } from "@/lib/userDisplay"
-import { useActiveWorkspace } from "@/hooks/useActiveWorkspace"
+import { WorkspaceSwitcher } from "./WorkspaceSwitcher"
 
 interface NavItem {
   label: string
   icon: typeof Bot
   path?: string
   hasSubmenu?: boolean
+  /** Not built yet — rendered visible but non-interactive. */
   disabled?: boolean
 }
 
@@ -52,63 +38,16 @@ const navItems: NavItem[] = [
   { label: "Activity", icon: Bell, disabled: true },
 ]
 
-function useInitials() {
-  const user = useAuthStore((s) => s.user)
-  if (!user) return "U"
-  return computeInitials(user)
-}
-
-/** Account Settings + Sign Out only — every other item from the real
- *  Roboflow menu (Docs, Community Forum, Changelog, Send Feedback, Report a
- *  Bug, Email Support, Chat, Talk with an Expert) is deliberately left out;
- *  this is an internal tool, not a product with a support funnel. */
-function UserMenu({ trigger }: { trigger: React.ReactNode }) {
-  const navigate = useNavigate()
-  const { user, logout } = useAuthStore()
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-64">
-        <div className="flex items-center gap-2.5 px-2 py-1.5">
-          <Avatar className="size-8">
-            <AvatarFallback className="bg-brand/15 text-xs text-brand">
-              {user ? computeInitials(user) : "U"}
-            </AvatarFallback>
-          </Avatar>
-          <div className="min-w-0">
-            <p className="truncate text-sm font-medium">{user ? fullName(user) : ""}</p>
-            <p className="truncate text-xs text-muted-foreground">@{user?.username}</p>
-            <p className="truncate text-xs text-muted-foreground">{user?.email}</p>
-          </div>
-        </div>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => navigate("/settings/account")}>
-          <UserCog className="size-4" />
-          Account Settings
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={logout}>
-          <LogOut className="size-4" />
-          Sign Out
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
-}
-
 export function IconRail({ expanded }: { expanded: boolean }) {
-  const initials = useInitials()
-  const { name: workspaceName } = useActiveWorkspace()
-
   if (!expanded) {
+    // Collapsed: icon-only rail, used once you're inside a project.
+    // No logo here (it lives in the global Topbar now) and no user
+    // profile block (also in the Topbar) — just workspace switch + nav.
     return (
-      <aside className="flex h-screen w-14 shrink-0 flex-col items-center border-r border-sidebar-border bg-sidebar py-3">
-        <NavLink to="/projects" className="mb-1">
-          <LogoMark />
-        </NavLink>
-        <button className="mb-3 rounded-md p-1.5 text-sidebar-muted hover:bg-sidebar-accent">
-          <ChevronsUpDown className="size-4" />
-        </button>
+      <aside className="flex h-full w-14 shrink-0 flex-col items-center border-r border-sidebar-border bg-sidebar py-3">
+        <div className="mb-2">
+          <WorkspaceSwitcher collapsed />
+        </div>
 
         <nav className="flex flex-col items-center gap-1">
           {navItems.map((item) =>
@@ -147,44 +86,15 @@ export function IconRail({ expanded }: { expanded: boolean }) {
             )
           )}
         </nav>
-
-        <div className="mt-auto flex flex-col items-center gap-2">
-          <UserMenu
-            trigger={
-              <button>
-                <Avatar className="size-7">
-                  <AvatarFallback className="bg-brand/15 text-xs text-brand">
-                    {initials}
-                  </AvatarFallback>
-                </Avatar>
-              </button>
-            }
-          />
-        </div>
       </aside>
     )
   }
 
+  // Expanded: full workspace-level nav with labels, used outside a project.
   return (
-    <aside className="flex h-screen w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar">
-      <div className="p-4 pb-2">
-        <Logo />
-      </div>
-
-      <div className="px-3 pb-2">
-        <DropdownMenu>
-          <DropdownMenuTrigger className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left hover:bg-sidebar-accent">
-            <div className="flex-1 overflow-hidden">
-              <p className="truncate text-sm font-medium text-sidebar-foreground">
-                {workspaceName ?? "Loading…"}
-              </p>
-            </div>
-            <ChevronsUpDown className="size-4 text-sidebar-muted" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-56">
-            <DropdownMenuItem>{workspaceName ?? "Workspace"}</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+    <aside className="flex h-full w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar">
+      <div className="px-3 pt-3 pb-2">
+        <WorkspaceSwitcher />
       </div>
 
       <nav className="flex flex-col gap-0.5 px-3">
@@ -218,28 +128,6 @@ export function IconRail({ expanded }: { expanded: boolean }) {
           )
         )}
       </nav>
-
-      <div className="mt-auto flex flex-col gap-3 p-3">
-        <UserMenu
-          trigger={
-            <button className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-sidebar-accent">
-              <Avatar className="size-7">
-                <AvatarFallback className="bg-brand/15 text-xs text-brand">
-                  {initials}
-                </AvatarFallback>
-              </Avatar>
-              <UserLabel />
-            </button>
-          }
-        />
-        <CreditsWidget />
-      </div>
     </aside>
   )
-}
-
-function UserLabel() {
-  const user = useAuthStore((s) => s.user)
-  if (!user) return null
-  return <span className="truncate text-sm text-sidebar-foreground">{fullName(user)}</span>
 }
