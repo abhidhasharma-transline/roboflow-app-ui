@@ -33,4 +33,8 @@ export interface ProjectMember {
   id: string
   user_id: string
   role: "admin" | "labeler" | "reviewer" | "super_admin"
+  email: string
+  username: string
+  first_name?: string
+  last_name?: string
 }

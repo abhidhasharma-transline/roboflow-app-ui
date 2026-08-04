@@ -11,7 +11,10 @@ export function AppShell() {
       {/* Full-width top bar — logo lives here now, not in the sidebar */}
       <Topbar />
       <div className="flex min-w-0 flex-1 overflow-hidden">
-        <IconRail expanded={!projectId} />
+        {/* Inside a project, only the project's own sidebar (Upload/Annotate/
+            Train) shows — the workspace-level icon rail (Agent/Projects/…)
+            is hidden entirely, not just collapsed. */}
+        {!projectId && <IconRail expanded />}
         {projectId && <ProjectSidebar />}
         <div className="flex-1 overflow-y-auto">
           <Outlet />

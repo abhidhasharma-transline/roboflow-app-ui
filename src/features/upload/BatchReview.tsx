@@ -26,25 +26,33 @@ const TABS: { key: BatchPreviewTab; label: string }[] = [
 
 /** Thumbnail generation runs async on a worker — thumbnail_url can point at
  *  an object that doesn't exist in storage yet, which shows as a broken
- *  image. Fall back to a plain placeholder instead of a broken-image icon. */
+ *  image. Fall back to a plain placeholder instead of a broken-image icon.
+ *  Duplicates now carry a real thumbnail (reused from the original image),
+ *  so they get the actual photo plus a small badge, not a blank box. */
 function Thumb({ img }: { img: BatchPreviewImage }) {
   const [failed, setFailed] = useState(false)
-
-  if (!img.thumbnail_url || failed) {
-    return (
-      <div className="flex size-full items-center justify-center text-xs text-muted-foreground">
-        {img.is_duplicate ? "Duplicate" : "Processing…"}
-      </div>
-    )
-  }
+  const hasImage = img.thumbnail_url && !failed
 
   return (
-    <img
-      src={img.thumbnail_url}
-      alt={img.filename}
-      className="size-full object-cover"
-      onError={() => setFailed(true)}
-    />
+    <div className="relative size-full">
+      {hasImage ? (
+        <img
+          src={img.thumbnail_url!}
+          alt={img.filename}
+          className="size-full object-cover"
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <div className="flex size-full items-center justify-center text-xs text-muted-foreground">
+          Processing…
+        </div>
+      )}
+      {img.is_duplicate && (
+        <span className="absolute top-1 left-1 rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-medium text-amber-950 shadow-sm">
+          Duplicate
+        </span>
+      )}
+    </div>
   )
 }
 
@@ -65,14 +73,6 @@ export function BatchReview({
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const folderInputRef = useRef<HTMLInputElement>(null)
-
-  // Browsers don't fire `change` on an <input type=file> if the same file(s)
-  // are re-selected without first clearing its value — clear it right before
-  // opening the dialog so re-picking the same folder/files always fires.
-  function openPicker(ref: React.RefObject<HTMLInputElement | null>) {
-    if (ref.current) ref.current.value = ""
-    ref.current?.click()
-  }
 
   async function refresh(targetTab: BatchPreviewTab = tab) {
     setLoading(true)
@@ -205,11 +205,11 @@ export function BatchReview({
             </p>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => openPicker(fileInputRef)}>
+            <Button variant="outline" onClick={() => fileInputRef.current?.click()}>
               <FileText className="size-4" />
               Select Files
             </Button>
-            <Button variant="outline" onClick={() => openPicker(folderInputRef)}>
+            <Button variant="outline" onClick={() => folderInputRef.current?.click()}>
               <BoxSelect className="size-4" />
               Select Folder
             </Button>

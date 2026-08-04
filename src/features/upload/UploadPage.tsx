@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { useParams } from "react-router-dom"
+import { useParams, useNavigate } from "react-router-dom"
 import {
   Upload,
   Image as ImageIcon,
@@ -16,8 +16,8 @@ import { Label } from "@/components/ui/label"
 import { Progress } from "@/components/ui/progress"
 import {
   Dialog,
-  DialogHeader,
   DialogContent,
+  DialogHeader,
   DialogTitle,
   DialogDescription,
   DialogFooter,
@@ -77,6 +77,7 @@ function LocalThumb({ file, onRemove }: { file: File; onRemove: () => void }) {
 
 export function UploadPage() {
   const { projectId } = useParams()
+  const navigate = useNavigate()
   const workspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   const { pendingBatch, setPendingBatch, clearPendingBatch } = useUnsavedUploadStore()
   useUnsavedUploadGuard()
@@ -91,14 +92,6 @@ export function UploadPage() {
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const folderInputRef = useRef<HTMLInputElement>(null)
-
-  // Browsers don't fire `change` on an <input type=file> if the same file(s)
-  // are re-selected without first clearing its value — clear it right before
-  // opening the dialog so re-picking the same folder/files always fires.
-  function openPicker(ref: React.RefObject<HTMLInputElement | null>) {
-    if (ref.current) ref.current.value = ""
-    ref.current?.click()
-  }
 
   async function commitImages(files: File[], folderName?: string) {
     if (!workspaceId || !projectId) {
@@ -134,11 +127,7 @@ export function UploadPage() {
     }
 
     if (imageFiles.length === 0) return
-    setStage((prev) =>
-      prev.kind === "selected"
-        ? { kind: "selected", files: [...prev.files, ...imageFiles], folderName: prev.folderName ?? folderName }
-        : { kind: "selected", files: imageFiles, folderName }
-    )
+    setStage({ kind: "selected", files: imageFiles, folderName })
   }
 
   function onDrop(e: React.DragEvent) {
@@ -155,9 +144,9 @@ export function UploadPage() {
     if (folderInputRef.current) folderInputRef.current.value = ""
   }
 
-  function handleSaved() {
+  function handleSaved(batchId: string) {
     clearPendingBatch()
-    resetToIdle()
+    navigate(`/projects/${projectId}/annotate/batch/${batchId}`)
   }
 
   async function handleDiscard() {
@@ -171,7 +160,7 @@ export function UploadPage() {
     clearPendingBatch()
     setDiscardOpen(false)
     setDiscarding(false)
-    resetToIdle()
+    navigate("/projects")
   }
 
   const isBusy = stage.kind === "committing" || stage.kind === "video-modal"
@@ -196,29 +185,6 @@ export function UploadPage() {
 
       <div className="mx-auto max-w-4xl">
         <div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept="image/jpeg,image/png,image/bmp,image/webp,image/avif,video/mp4,video/quicktime"
-            className="hidden"
-            onChange={(e) => e.target.files && handleFiles(e.target.files)}
-          />
-          <input
-            ref={folderInputRef}
-            type="file"
-            multiple
-            // @ts-expect-error — non-standard but supported by every major browser
-            webkitdirectory=""
-            className="hidden"
-            onChange={(e) => {
-              if (!e.target.files || e.target.files.length === 0) return
-              const first = e.target.files[0] as File & { webkitRelativePath?: string }
-              const folderName = first.webkitRelativePath?.split("/")[0] ?? "Folder upload"
-              handleFiles(e.target.files, folderName)
-            }}
-          />
-
           {stage.kind !== "review" && (
             <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="flex flex-col gap-1.5">
@@ -243,7 +209,7 @@ export function UploadPage() {
               batchId={stage.batchId}
               batchName={batchName}
               tags={tags}
-              onSaved={handleSaved}
+              onSaved={() => handleSaved(stage.batchId)}
             />
           ) : stage.kind === "selected" ? (
             <div>
@@ -253,14 +219,6 @@ export function UploadPage() {
                   nothing has been sent to the server yet.
                 </p>
                 <div className="flex gap-2">
-                  <Button variant="outline" onClick={() => openPicker(fileInputRef)}>
-                    <FileText className="size-4" />
-                    Select Files
-                  </Button>
-                  <Button variant="outline" onClick={() => openPicker(folderInputRef)}>
-                    <BoxSelect className="size-4" />
-                    Select Folder
-                  </Button>
                   <Button variant="outline" onClick={resetToIdle}>
                     Cancel
                   </Button>
@@ -315,15 +273,37 @@ export function UploadPage() {
                     Drag and drop file(s) to upload, or:
                   </p>
                   <div className="flex gap-2">
-                    <Button variant="outline" onClick={() => openPicker(fileInputRef)}>
+                    <Button variant="outline" onClick={() => fileInputRef.current?.click()}>
                       <FileText className="size-4" />
                       Select File(s)
                     </Button>
-                    <Button variant="outline" onClick={() => openPicker(folderInputRef)}>
+                    <Button variant="outline" onClick={() => folderInputRef.current?.click()}>
                       <BoxSelect className="size-4" />
                       Select Folder
                     </Button>
                   </div>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    accept="image/jpeg,image/png,image/bmp,image/webp,image/avif,video/mp4,video/quicktime"
+                    className="hidden"
+                    onChange={(e) => e.target.files && handleFiles(e.target.files)}
+                  />
+                  <input
+                    ref={folderInputRef}
+                    type="file"
+                    multiple
+                    // @ts-expect-error — non-standard but supported by every major browser
+                    webkitdirectory=""
+                    className="hidden"
+                    onChange={(e) => {
+                      if (!e.target.files || e.target.files.length === 0) return
+                      const first = e.target.files[0] as File & { webkitRelativePath?: string }
+                      const folderName = first.webkitRelativePath?.split("/")[0] ?? "Folder upload"
+                      handleFiles(e.target.files, folderName)
+                    }}
+                  />
 
                   <div className="mt-4 w-full border-t border-border pt-4">
                     <p className="mb-3 text-xs font-medium text-muted-foreground">

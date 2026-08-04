@@ -9,7 +9,7 @@ import { FolderProjectsPage } from "@/features/projects/FolderProjectsPage"
 import { UploadPage } from "@/features/upload/UploadPage"
 import { TrainPage } from "@/features/train/TrainPage"
 import { AnnotatePage } from "@/features/annotate/AnnotatePage"
-import { BatchView } from "@/features/annotate/BatchView"
+import { BatchAssignPage } from "@/features/annotate/BatchAssignPage"
 import { JobPage } from "@/features/annotate/JobPage"
 import { AnnotationToolPage } from "@/features/annotate/AnnotationTool"
 import { DatasetPage } from "@/features/dataset/DatasetPage"
@@ -65,8 +65,8 @@ function App() {
           <Route path="/projects/:projectId/upload" element={<UploadPage />} />
           <Route path="/projects/:projectId/annotate" element={<AnnotatePage />} />
           <Route
-            path="/projects/:projectId/annotate/batch/:status"
-            element={<BatchView />}
+            path="/projects/:projectId/annotate/batch/:batchId"
+            element={<BatchAssignPage />}
           />
           <Route
             path="/projects/:projectId/annotate/job/:jobId"

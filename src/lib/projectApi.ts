@@ -60,10 +60,12 @@ export async function createProject(
 
 export async function listProjectMembers(
   workspaceId: string,
-  projectId: string
+  projectId: string,
+  role?: string
 ): Promise<ProjectMember[]> {
   const res = await api.get<ProjectMember[]>(
-    `${base(workspaceId)}/projects/${projectId}/members`
+    `${base(workspaceId)}/projects/${projectId}/members`,
+    { params: role ? { role } : undefined }
   )
   return res.data
 }
