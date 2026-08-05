@@ -34,9 +34,81 @@ const navItems: NavItem[] = [
   { label: "Deployments", icon: Server, hasSubmenu: true, disabled: true },
   { label: "Vision Events", icon: BarChart3, disabled: true },
   { label: "Explore", icon: Compass, disabled: true },
-  { label: "Settings", icon: Settings, path: "/settings/account" },
-  { label: "Activity", icon: Bell, disabled: true },
 ]
+
+// Pinned to the bottom of the rail — Notifications sits just above Settings.
+const bottomNavItems: NavItem[] = [
+  { label: "Notifications", icon: Bell, path: "/notifications" },
+  { label: "Settings", icon: Settings, path: "/settings/account" },
+]
+
+function CollapsedItem({ item }: { item: NavItem }) {
+  if (item.disabled) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className="flex size-9 cursor-not-allowed items-center justify-center rounded-md text-sidebar-muted/50"
+            aria-disabled
+          >
+            <item.icon className="size-4.5" />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="right">{item.label} — coming soon</TooltipContent>
+      </Tooltip>
+    )
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <NavLink
+          to={item.path!}
+          className={({ isActive }) =>
+            cn(
+              "flex size-9 items-center justify-center rounded-md text-sidebar-foreground hover:bg-sidebar-accent",
+              isActive && "bg-sidebar-accent text-sidebar-accent-foreground"
+            )
+          }
+        >
+          <item.icon className="size-4.5" />
+        </NavLink>
+      </TooltipTrigger>
+      <TooltipContent side="right">{item.label}</TooltipContent>
+    </Tooltip>
+  )
+}
+
+function ExpandedItem({ item }: { item: NavItem }) {
+  if (item.disabled) {
+    return (
+      <span
+        className="flex cursor-not-allowed items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm text-sidebar-muted/50"
+        aria-disabled
+      >
+        <item.icon className="size-4" />
+        <span className="flex-1">{item.label}</span>
+        {item.hasSubmenu && <ChevronRight className="size-3.5" />}
+      </span>
+    )
+  }
+
+  return (
+    <NavLink
+      to={item.path!}
+      className={({ isActive }) =>
+        cn(
+          "flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm text-sidebar-foreground transition-colors hover:bg-sidebar-accent",
+          isActive && "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+        )
+      }
+    >
+      <item.icon className="size-4" />
+      <span className="flex-1">{item.label}</span>
+      {item.hasSubmenu && <ChevronRight className="size-3.5" />}
+    </NavLink>
+  )
+}
 
 export function IconRail({ expanded }: { expanded: boolean }) {
   if (!expanded) {
@@ -50,41 +122,15 @@ export function IconRail({ expanded }: { expanded: boolean }) {
         </div>
 
         <nav className="flex flex-col items-center gap-1">
-          {navItems.map((item) =>
-            item.disabled ? (
-              <Tooltip key={item.label}>
-                <TooltipTrigger asChild>
-                  <span
-                    className="flex size-9 cursor-not-allowed items-center justify-center rounded-md text-sidebar-muted/50"
-                    aria-disabled
-                  >
-                    <item.icon className="size-4.5" />
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent side="right">
-                  {item.label} — coming soon
-                </TooltipContent>
-              </Tooltip>
-            ) : (
-              <Tooltip key={item.label}>
-                <TooltipTrigger asChild>
-                  <NavLink
-                    to={item.path!}
-                    className={({ isActive }) =>
-                      cn(
-                        "flex size-9 items-center justify-center rounded-md text-sidebar-foreground hover:bg-sidebar-accent",
-                        isActive &&
-                          "bg-sidebar-accent text-sidebar-accent-foreground"
-                      )
-                    }
-                  >
-                    <item.icon className="size-4.5" />
-                  </NavLink>
-                </TooltipTrigger>
-                <TooltipContent side="right">{item.label}</TooltipContent>
-              </Tooltip>
-            )
-          )}
+          {navItems.map((item) => (
+            <CollapsedItem key={item.label} item={item} />
+          ))}
+        </nav>
+
+        <nav className="mt-auto flex flex-col items-center gap-1">
+          {bottomNavItems.map((item) => (
+            <CollapsedItem key={item.label} item={item} />
+          ))}
         </nav>
       </aside>
     )
@@ -98,35 +144,15 @@ export function IconRail({ expanded }: { expanded: boolean }) {
       </div>
 
       <nav className="flex flex-col gap-0.5 px-3">
-        {navItems.map((item) =>
-          item.disabled ? (
-            <span
-              key={item.label}
-              className="flex cursor-not-allowed items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm text-sidebar-muted/50"
-              aria-disabled
-            >
-              <item.icon className="size-4" />
-              <span className="flex-1">{item.label}</span>
-              {item.hasSubmenu && <ChevronRight className="size-3.5" />}
-            </span>
-          ) : (
-            <NavLink
-              key={item.label}
-              to={item.path!}
-              className={({ isActive }) =>
-                cn(
-                  "flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm text-sidebar-foreground transition-colors hover:bg-sidebar-accent",
-                  isActive &&
-                    "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
-                )
-              }
-            >
-              <item.icon className="size-4" />
-              <span className="flex-1">{item.label}</span>
-              {item.hasSubmenu && <ChevronRight className="size-3.5" />}
-            </NavLink>
-          )
-        )}
+        {navItems.map((item) => (
+          <ExpandedItem key={item.label} item={item} />
+        ))}
+      </nav>
+
+      <nav className="mt-auto flex flex-col gap-0.5 px-3 py-3">
+        {bottomNavItems.map((item) => (
+          <ExpandedItem key={item.label} item={item} />
+        ))}
       </nav>
     </aside>
   )

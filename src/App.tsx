@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
 import { AppShell } from "@/components/layout/AppShell"
 import { LoginPage } from "@/features/auth/LoginPage"
 import { RegisterPage } from "@/features/auth/RegisterPage"
+import { ActivateAccountPage } from "@/features/auth/ActivateAccountPage"
 import { WorkspacePage } from "@/features/workspace/WorkspacePage"
 import { ProjectsPage } from "@/features/projects/ProjectsPage"
 import { FolderProjectsPage } from "@/features/projects/FolderProjectsPage"
@@ -14,9 +15,13 @@ import { JobPage } from "@/features/annotate/JobPage"
 import { AnnotationToolPage } from "@/features/annotate/AnnotationTool"
 import { DatasetPage } from "@/features/dataset/DatasetPage"
 import { VersionsPage } from "@/features/versions/VersionsPage"
+import { SettingsLayout } from "@/features/settings/SettingsLayout"
 import { AccountSettingsPage } from "@/features/settings/AccountSettingsPage"
+import { WorkspacesOverviewPage } from "@/features/settings/WorkspacesOverviewPage"
+import { UsersSettingsPage } from "@/features/settings/UsersSettingsPage"
 import { WorkspaceMembersPage } from "@/features/settings/WorkspaceMembersPage"
 import { InvitationAcceptPage } from "@/features/workspace/InvitationAcceptPage"
+import { NotificationsPage } from "@/features/notifications/NotificationsPage"
 import { useAuthStore } from "@/stores/authStore"
 import { useDefaultWorkspace } from "@/hooks/useDefaultWorkspace"
 
@@ -47,6 +52,7 @@ function App() {
         {/* Public routes */}
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
+        <Route path="/activate/:token" element={<ActivateAccountPage />} />
         <Route path="/workspace/invitations/:token" element={<InvitationAcceptPage />} />
 
         {/* Authenticated app shell */}
@@ -79,11 +85,14 @@ function App() {
           <Route path="/projects/:projectId/dataset" element={<DatasetPage />} />
           <Route path="/projects/:projectId/versions" element={<VersionsPage />} />
 
-          <Route path="/settings/account" element={<AccountSettingsPage />} />
-          <Route
-            path="/settings/workspaces/:workspaceId/members"
-            element={<WorkspaceMembersPage />}
-          />
+          <Route path="/notifications" element={<NotificationsPage />} />
+
+          <Route path="/settings" element={<SettingsLayout />}>
+            <Route path="account" element={<AccountSettingsPage />} />
+            <Route path="workspaces" element={<WorkspacesOverviewPage />} />
+            <Route path="workspaces/:workspaceId/members" element={<WorkspaceMembersPage />} />
+          </Route>
+          <Route path="/settings/users" element={<UsersSettingsPage />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/projects" replace />} />

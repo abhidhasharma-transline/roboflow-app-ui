@@ -23,6 +23,7 @@ export function RegisterPage() {
 
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [registrationClosed, setRegistrationClosed] = useState(false)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -48,7 +49,11 @@ export function RegisterPage() {
 
       navigate("/projects")
     } catch (err) {
-      setError(extractErrorMessage(err))
+      if (isRegistrationClosedError(err)) {
+        setRegistrationClosed(true)
+      } else {
+        setError(extractErrorMessage(err))
+      }
     } finally {
       setIsLoading(false)
     }
@@ -77,6 +82,20 @@ export function RegisterPage() {
             Start building computer vision datasets in minutes.
           </p>
 
+          {registrationClosed ? (
+            <div className="space-y-5">
+              <p className="rounded-md border border-white/10 bg-[#17171F] p-4 text-sm text-zinc-300">
+                Registration is closed — ask your super admin for an account.
+                You'll receive an email with a link to set your password once
+                one is created for you.
+              </p>
+              <Link to="/login">
+                <Button className="w-full h-11 bg-violet-600 hover:bg-violet-500">
+                  Go to Sign In
+                </Button>
+              </Link>
+            </div>
+          ) : (
           <form
             onSubmit={handleSubmit}
             className="space-y-5"
@@ -176,37 +195,42 @@ export function RegisterPage() {
             </Button>
 
           </form>
+          )}
 
-          <div className="relative my-8">
+          {!registrationClosed && (
+            <>
+              <div className="relative my-8">
 
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-white/10" />
-            </div>
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-white/10" />
+                </div>
 
-            <div className="relative flex justify-center">
-              <span className="bg-[#111118] px-4 text-xs text-zinc-500">
-                OR
-              </span>
-            </div>
+                <div className="relative flex justify-center">
+                  <span className="bg-[#111118] px-4 text-xs text-zinc-500">
+                    OR
+                  </span>
+                </div>
 
-          </div>
+              </div>
 
-          <Button
-            variant="outline"
-            className="w-full h-11 border-white/10 bg-transparent text-white hover:bg-white/5"
-          >
-            Continue with Google
-          </Button>
+              <Button
+                variant="outline"
+                className="w-full h-11 border-white/10 bg-transparent text-white hover:bg-white/5"
+              >
+                Continue with Google
+              </Button>
 
-          <p className="mt-8 text-center text-sm text-zinc-400">
-            Already have an account?{" "}
-            <Link
-              to="/login"
-              className="font-medium text-violet-400 hover:text-violet-300"
-            >
-              Sign In
-            </Link>
-          </p>
+              <p className="mt-8 text-center text-sm text-zinc-400">
+                Already have an account?{" "}
+                <Link
+                  to="/login"
+                  className="font-medium text-violet-400 hover:text-violet-300"
+                >
+                  Sign In
+                </Link>
+              </p>
+            </>
+          )}
 
         </div>
 
@@ -240,4 +264,10 @@ function extractErrorMessage(err: unknown): string {
   }
 
   return "Registration failed. Please try again."
+}
+
+function isRegistrationClosedError(err: unknown): boolean {
+  if (typeof err !== "object" || err === null || !("response" in err)) return false
+  const status = (err as { response?: { status?: number } }).response?.status
+  return status === 403
 }

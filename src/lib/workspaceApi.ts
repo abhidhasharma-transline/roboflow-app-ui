@@ -4,6 +4,7 @@ import type {
   WorkspaceMember,
   WorkspaceInvitation,
   MyInvitation,
+  MemberAccessPayload,
 } from "@/types/workspace"
 
 export async function listWorkspaces(): Promise<Workspace[]> {
@@ -23,15 +24,29 @@ export async function listWorkspaceMembers(
   return res.data
 }
 
+/** Super admin or the workspace owner only. */
+export async function updateWorkspaceMember(
+  workspaceId: string,
+  userId: string,
+  payload: Partial<MemberAccessPayload> & { full_access?: boolean }
+): Promise<WorkspaceMember> {
+  const res = await api.patch<WorkspaceMember>(
+    `/workspaces/${workspaceId}/members/${userId}`,
+    payload
+  )
+  return res.data
+}
+
 /* ---------- Invitations ---------- */
 
 export async function inviteWorkspaceMember(
   workspaceId: string,
-  email: string
+  email: string,
+  access: MemberAccessPayload
 ): Promise<{ message: string }> {
   const res = await api.post<{ message: string }>(
     `/workspaces/${workspaceId}/invite`,
-    { email }
+    { email, ...access }
   )
   return res.data
 }

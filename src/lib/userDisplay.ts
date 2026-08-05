@@ -26,6 +26,7 @@ const ROLE_LABELS: Record<string, string> = {
   reviewer: "Reviewer",
 }
 
-export function roleLabel(role: string): string {
+export function roleLabel(role: string | null | undefined): string {
+  if (!role) return "Member"
   return ROLE_LABELS[role] ?? role
 }
