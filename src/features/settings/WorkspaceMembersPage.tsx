@@ -160,7 +160,14 @@ export function WorkspaceMembersPage() {
                           </AvatarFallback>
                         </Avatar>
                         <div>
-                          <p className="font-medium text-foreground">{m.username}</p>
+                          <p className="font-medium text-foreground">
+                            {m.username}
+                            {m.user_id === currentUser?.id && (
+                              <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                                (you)
+                              </span>
+                            )}
+                          </p>
                           <p className="text-xs text-muted-foreground">{m.email}</p>
                         </div>
                       </div>
@@ -183,7 +190,10 @@ export function WorkspaceMembersPage() {
                       </div>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      {canManage && (
+                      {/* Owner/SA can manage everyone else, but never themselves here —
+                          their own access isn't governed by this row (owner authority /
+                          super_admin bypass), and editing it risks a confusing self-lockout. */}
+                      {canManage && m.user_id !== currentUser?.id && (
                         <button
                           onClick={() => setEditingMember(m)}
                           className="text-muted-foreground hover:text-foreground"

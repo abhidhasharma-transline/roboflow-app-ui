@@ -6,7 +6,7 @@
 :root {
   --radius: 0.5rem;
 
-  --background: oklch(1 0 0);
+  --background: oklch(0.98 0 0);
   --foreground: oklch(0.145 0 0);
 
   --card: oklch(1 0 0);
@@ -30,8 +30,8 @@
   --destructive: oklch(0.577 0.245 27.325);
   --destructive-foreground: oklch(0.985 0 0);
 
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
+  --border: oklch(0.87 0 0);
+  --input: oklch(0.87 0 0);
   --ring: oklch(0.708 0 0);
 
   /* Brand accent — Annomaster purple, used for primary CTAs / active nav / logo */

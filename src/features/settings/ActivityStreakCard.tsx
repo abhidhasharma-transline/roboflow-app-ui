@@ -28,8 +28,14 @@ function levelForCount(count: number): number {
   return 4
 }
 
+// Local calendar date, deliberately NOT toISOString() — that converts to UTC,
+// which shifts the date backward for any timezone ahead of UTC (e.g. IST)
+// and made "today" mismatch the backend's date grouping.
 function toDateKey(date: Date): string {
-  return date.toISOString().slice(0, 10)
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, "0")
+  const day = String(date.getDate()).padStart(2, "0")
+  return `${year}-${month}-${day}`
 }
 
 export function ActivityStreakCard() {
@@ -42,7 +48,7 @@ export function ActivityStreakCard() {
       .finally(() => setIsLoading(false))
   }, [])
 
-  const countByDate = new Map(activity.map((a) => [a.date, a.count]))
+  const activityByDate = new Map(activity.map((a) => [a.date, a]))
 
   const today = new Date()
   today.setHours(0, 0, 0, 0)
@@ -56,15 +62,17 @@ export function ActivityStreakCard() {
   const totalCells = Math.ceil((today.getTime() - alignedStart.getTime()) / 86400000) + 1
   const totalColumns = Math.ceil(totalCells / 7)
 
-  const days: { date: string; count: number; col: number; row: number }[] = []
+  const days: { date: string; count: number; actions: string[]; col: number; row: number }[] = []
   for (let i = 0; i < totalColumns * 7; i++) {
     const d = new Date(alignedStart)
     d.setDate(d.getDate() + i)
     if (d > today) break
     const key = toDateKey(d)
+    const dayActivity = activityByDate.get(key)
     days.push({
       date: key,
-      count: countByDate.get(key) ?? 0,
+      count: dayActivity?.count ?? 0,
+      actions: dayActivity?.actions ?? [],
       col: Math.floor(i / 7),
       row: i % 7,
     })
@@ -124,6 +132,7 @@ export function ActivityStreakCard() {
             {/* Grid */}
             <div
               className="grid flex-1"
+              title={totalActivities === 0 ? "No activity yet, time to get to work 👀" : undefined}
               style={{
                 gridTemplateColumns: `repeat(${totalColumns}, minmax(0, 1fr))`,
                 gridTemplateRows: `repeat(7, 1fr)`,
@@ -135,7 +144,13 @@ export function ActivityStreakCard() {
               {days.map((day) => (
                 <div
                   key={day.date}
-                  title={`${day.count} ${day.count === 1 ? "activity" : "activities"} on ${day.date}`}
+                  title={
+                    totalActivities === 0
+                      ? undefined
+                      : day.count === 0
+                        ? `No activity on ${day.date}`
+                        : `${day.date}:\n${day.actions.map((a) => `• ${a}`).join("\n")}`
+                  }
                   style={{ gridColumnStart: day.col + 1, gridRowStart: day.row + 1 }}
                   className={`aspect-square w-full rounded-sm ${LEVEL_CLASSES[levelForCount(day.count)]}`}
                 />

@@ -33,6 +33,7 @@ export interface ProjectMember {
   id: string
   user_id: string
   role: "admin" | "labeler" | "reviewer" | "super_admin"
+  permission_overrides: Record<string, boolean> | null
   email: string
   username: string
   first_name?: string

@@ -24,9 +24,9 @@ export function ProjectCard({ project }: { project: Project }) {
   return (
     <Link
       to={`/projects/${project.id}/train`}
-      className="group block overflow-hidden rounded-lg border border-border bg-card transition-shadow hover:shadow-md"
+      className="group block overflow-hidden rounded-lg border border-border bg-card transition-all duration-200 hover:border-brand/30 hover:shadow-[0_0_18px_-6px_rgba(168,85,247,0.25)]"
     >
-      <div className="flex aspect-[16/10] items-center justify-center bg-muted">
+      <div className="flex aspect-[16/9] items-center justify-center bg-muted">
         <Scan className="size-8 text-muted-foreground/30" />
       </div>
 

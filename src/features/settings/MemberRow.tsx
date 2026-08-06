@@ -1,0 +1,262 @@
+import { useState } from "react"
+import { ChevronDown, ChevronRight, Plus } from "lucide-react"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Switch } from "@/components/ui/switch"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { initials, roleLabel } from "@/lib/userDisplay"
+import { effectivePermissions, PERMISSION_KEYS, PERMISSION_LABELS, type PermissionKey } from "@/lib/permissions"
+import { getProjectColor } from "@/lib/projectColors"
+import { updateProjectMember, addProjectMember } from "@/lib/projectApi"
+import type { WorkspaceMember } from "@/types/workspace"
+import type { WorkspaceRole } from "@/types/auth"
+import type { Project } from "@/types/project"
+
+export interface ProjectOverride {
+  project: Project
+  role: WorkspaceRole
+  permissions: Record<string, boolean> | null
+}
+
+const ROLE_OPTIONS: WorkspaceRole[] = ["admin", "labeler", "reviewer"]
+
+interface MemberRowProps {
+  workspaceId: string
+  member: WorkspaceMember
+  overrides: ProjectOverride[]
+  allProjects: Project[]
+  canManage: boolean
+  isSelf: boolean
+  /** True when this row is the viewer's own row AND the viewer is a super admin —
+   *  their workspace_members.role is a vestigial "admin" value they never actually
+   *  rely on (super_admin bypasses everything), so show that instead. */
+  selfIsSuperAdmin: boolean
+  onRoleChange: (userId: string, role: WorkspaceRole) => void
+  onRefetchOverrides: () => void
+}
+
+export function MemberRow({
+  workspaceId,
+  member,
+  overrides,
+  allProjects,
+  canManage,
+  isSelf,
+  selfIsSuperAdmin,
+  onRoleChange,
+  onRefetchOverrides,
+}: MemberRowProps) {
+  const [expanded, setExpanded] = useState(false)
+  const [isAdding, setIsAdding] = useState(false)
+  const [addingProjectId, setAddingProjectId] = useState<string | null>(null)
+  const [draftPermissions, setDraftPermissions] = useState<Record<PermissionKey, boolean> | null>(null)
+
+  function cancelAdd() {
+    setIsAdding(false)
+    setAddingProjectId(null)
+    setDraftPermissions(null)
+  }
+
+  const overriddenProjectIds = new Set(overrides.map((o) => o.project.id))
+  const availableToAdd = allProjects.filter((p) => !overriddenProjectIds.has(p.id))
+
+  async function savePermissions(projectId: string, permissions: Record<string, boolean>, isNew: boolean) {
+    if (isNew) {
+      await addProjectMember(workspaceId, projectId, member.user_id, member.role, permissions)
+    } else {
+      await updateProjectMember(workspaceId, projectId, member.user_id, { permissions })
+    }
+    cancelAdd()
+    onRefetchOverrides()
+  }
+
+  return (
+    <div className="border-b border-border py-3 last:border-0">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5">
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            className="text-muted-foreground hover:text-foreground"
+            aria-label="Toggle project overrides"
+          >
+            {expanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+          </button>
+          <Avatar className="size-7">
+            <AvatarFallback className="bg-brand/15 text-xs text-brand">{initials(member)}</AvatarFallback>
+          </Avatar>
+          <div>
+            <p className="font-medium text-foreground">
+              {member.username}
+              {isSelf && <span className="ml-1.5 text-xs font-normal text-muted-foreground">(you)</span>}
+            </p>
+            <p className="text-xs text-muted-foreground">{member.email}</p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          {overrides.length > 0 && (
+            <div className="hidden flex-wrap items-center gap-1 sm:flex">
+              {overrides.slice(0, 2).map((o) => {
+                const color = getProjectColor(o.project.id)
+                return (
+                  <span
+                    key={o.project.id}
+                    className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${color.bg} ${color.text}`}
+                  >
+                    {o.project.name}
+                  </span>
+                )
+              })}
+              {overrides.length > 2 && (
+                <Badge variant="outline" className="text-[11px]">
+                  +{overrides.length - 2} more
+                </Badge>
+              )}
+            </div>
+          )}
+          {!member.has_full_project_access && (
+            <span className="text-xs text-muted-foreground">Limited access</span>
+          )}
+
+          {selfIsSuperAdmin ? null : canManage && !isSelf ? (
+            <Select value={member.role} onValueChange={(v) => onRoleChange(member.user_id, v as WorkspaceRole)}>
+              <SelectTrigger className="h-8 w-[110px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {ROLE_OPTIONS.map((r) => (
+                  <SelectItem key={r} value={r}>
+                    {roleLabel(r)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <Badge variant="secondary">{roleLabel(member.role)}</Badge>
+          )}
+        </div>
+      </div>
+
+      {expanded && (
+        <div className="mt-3 ml-8 flex flex-col gap-3 border-l border-border pl-4">
+          {selfIsSuperAdmin ? (
+            <p className="text-xs text-muted-foreground">
+              You have full access across the entire system as a super admin — project-level
+              permissions don't apply to you.
+            </p>
+          ) : (
+            <>
+              {overrides.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  No project-specific overrides — this member follows their workspace role/permissions
+                  everywhere.
+                </p>
+              )}
+
+              {overrides.map((o) => {
+                const color = getProjectColor(o.project.id)
+                return (
+                  <div key={o.project.id}>
+                    <p className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-foreground">
+                      <span className={`size-2 rounded-full ${color.bg}`} />
+                      {o.project.name}
+                    </p>
+                    <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
+                      {PERMISSION_KEYS.map((key) => {
+                        const effective = effectivePermissions(o.role, o.permissions)
+                        return (
+                          <label key={key} className="flex items-center justify-between gap-2 text-xs">
+                            <span className="text-muted-foreground">{PERMISSION_LABELS[key]}</span>
+                            <Switch
+                              disabled={!canManage || isSelf}
+                              checked={effective[key]}
+                              onCheckedChange={(v) =>
+                                savePermissions(o.project.id, { ...effective, [key]: v }, false)
+                              }
+                            />
+                          </label>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )
+              })}
+
+              {canManage && !isSelf && availableToAdd.length > 0 && (
+                <div>
+                  {isAdding ? (
+                    <div>
+                      <Select
+                        value={addingProjectId ?? undefined}
+                        onValueChange={(v) => {
+                          setAddingProjectId(v)
+                          setDraftPermissions(effectivePermissions(member.role, member.permission_overrides))
+                        }}
+                      >
+                        <SelectTrigger className="mb-2 h-8 w-full">
+                          <SelectValue placeholder="Choose a project" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {availableToAdd.map((p) => (
+                            <SelectItem key={p.id} value={p.id}>
+                              {p.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+
+                      {addingProjectId && draftPermissions && (
+                        <>
+                          <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
+                            {PERMISSION_KEYS.map((key) => (
+                              <label key={key} className="flex items-center justify-between gap-2 text-xs">
+                                <span className="text-muted-foreground">{PERMISSION_LABELS[key]}</span>
+                                <Switch
+                                  checked={draftPermissions[key]}
+                                  onCheckedChange={(v) =>
+                                    setDraftPermissions({ ...draftPermissions, [key]: v })
+                                  }
+                                />
+                              </label>
+                            ))}
+                          </div>
+                          <div className="mt-2 flex gap-2">
+                            <Button
+                              size="sm"
+                              variant="brand"
+                              onClick={() => savePermissions(addingProjectId, draftPermissions, true)}
+                            >
+                              Save override
+                            </Button>
+                            <Button size="sm" variant="ghost" onClick={cancelAdd}>
+                              Cancel
+                            </Button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setIsAdding(true)}
+                      className="flex items-center gap-1 text-xs font-medium text-brand hover:underline"
+                    >
+                      <Plus className="size-3.5" />
+                      Add project-specific override
+                    </button>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}

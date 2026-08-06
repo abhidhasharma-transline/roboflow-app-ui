@@ -72,4 +72,5 @@ export interface ChangePasswordRequest {
 export interface ActivityDay {
   date: string   // YYYY-MM-DD
   count: number
+  actions: string[]
 }
