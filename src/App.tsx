@@ -55,6 +55,17 @@ function App() {
         <Route path="/activate/:token" element={<ActivateAccountPage />} />
         <Route path="/workspace/invitations/:token" element={<InvitationAcceptPage />} />
 
+        {/* Full-screen annotation tool — deliberately outside AppShell so no
+            app chrome (Topbar/ProjectSidebar) bleeds into the editor. */}
+        <Route
+          path="/projects/:projectId/annotate/tool/:jobId"
+          element={
+            <RequireAuth>
+              <AnnotationToolPage />
+            </RequireAuth>
+          }
+        />
+
         {/* Authenticated app shell */}
         <Route
           element={
@@ -77,10 +88,6 @@ function App() {
           <Route
             path="/projects/:projectId/annotate/job/:jobId"
             element={<JobPage />}
-          />
-          <Route
-            path="/projects/:projectId/annotate/tool/:jobId"
-            element={<AnnotationToolPage />}
           />
           <Route path="/projects/:projectId/dataset" element={<DatasetPage />} />
           <Route path="/projects/:projectId/versions" element={<VersionsPage />} />

@@ -12,6 +12,7 @@ interface AnnotationState {
   setActiveClassId: (id: string) => void
   setAnnotations: (annotations: Annotation[]) => void
   addAnnotation: (annotation: Annotation) => void
+  upsertAnnotation: (annotation: Annotation) => void
   removeAnnotation: (id: string) => void
   setZoom: (zoom: number) => void
 }
@@ -26,6 +27,15 @@ export const useAnnotationStore = create<AnnotationState>((set) => ({
   setAnnotations: (annotations) => set({ annotations }),
   addAnnotation: (annotation) =>
     set((state) => ({ annotations: [...state.annotations, annotation] })),
+  upsertAnnotation: (annotation) =>
+    set((state) => {
+      const exists = state.annotations.some((a) => a.id === annotation.id)
+      return {
+        annotations: exists
+          ? state.annotations.map((a) => (a.id === annotation.id ? annotation : a))
+          : [...state.annotations, annotation],
+      }
+    }),
   removeAnnotation: (id) =>
     set((state) => ({
       annotations: state.annotations.filter((a) => a.id !== id),

@@ -2,9 +2,12 @@ import { api } from "@/lib/api"
 import type {
   BatchDetail,
   BatchSummary,
+  JobActivityEntry,
   JobCreateResponse,
   JobDetail,
   JobImageSummary,
+  JobReviewerSummary,
+  JobSummary,
   JobType,
 } from "@/types/job"
 
@@ -71,11 +74,81 @@ export async function getJobImages(
   workspaceId: string,
   projectId: string,
   jobId: string,
-  tab: "annotated" | "unannotated"
+  tab: "annotated" | "unannotated" | "all"
 ): Promise<{ images: JobImageSummary[] }> {
   const res = await api.get<{ images: JobImageSummary[] }>(
     `${jobsBase(workspaceId, projectId)}/${jobId}/images`,
     { params: { tab } }
+  )
+  return res.data
+}
+
+export async function listJobs(
+  workspaceId: string,
+  projectId: string,
+  status?: "active" | "completed" | "cancelled"
+): Promise<JobSummary[]> {
+  const res = await api.get<JobSummary[]>(jobsBase(workspaceId, projectId), {
+    params: status ? { status } : undefined,
+  })
+  return res.data
+}
+
+export async function updateJobInstructions(
+  workspaceId: string,
+  projectId: string,
+  jobId: string,
+  instructions: string
+): Promise<{ instructions: string | null }> {
+  const res = await api.patch<{ instructions: string | null }>(
+    `${jobsBase(workspaceId, projectId)}/${jobId}`,
+    { instructions }
+  )
+  return res.data
+}
+
+export async function reassignJob(
+  workspaceId: string,
+  projectId: string,
+  jobId: string,
+  payload: { assigneeIds: string[]; shuffle: boolean; instructions?: string }
+): Promise<void> {
+  await api.post(`${jobsBase(workspaceId, projectId)}/${jobId}/reassign`, {
+    assignee_ids: payload.assigneeIds,
+    shuffle: payload.shuffle,
+    instructions: payload.instructions ?? null,
+  })
+}
+
+export async function getJobActivity(
+  workspaceId: string,
+  projectId: string,
+  jobId: string
+): Promise<JobActivityEntry[]> {
+  const res = await api.get<JobActivityEntry[]>(
+    `${jobsBase(workspaceId, projectId)}/${jobId}/activity`
+  )
+  return res.data
+}
+
+export async function submitForReview(
+  workspaceId: string,
+  projectId: string,
+  jobId: string,
+  reviewerIds: string[]
+): Promise<void> {
+  await api.post(`${jobsBase(workspaceId, projectId)}/${jobId}/reviewers`, {
+    reviewer_ids: reviewerIds,
+  })
+}
+
+export async function listJobReviewers(
+  workspaceId: string,
+  projectId: string,
+  jobId: string
+): Promise<JobReviewerSummary[]> {
+  const res = await api.get<JobReviewerSummary[]>(
+    `${jobsBase(workspaceId, projectId)}/${jobId}/reviewers`
   )
   return res.data
 }

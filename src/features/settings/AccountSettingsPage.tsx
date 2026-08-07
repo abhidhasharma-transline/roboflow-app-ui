@@ -226,7 +226,7 @@ export function AccountSettingsPage() {
                   {workspaceRows.map(({ workspace, myMembership }) => (
                     <button
                       key={workspace.id}
-                      onClick={() => navigate(`/settings/workspaces/${workspace.id}/members`)}
+                      onClick={() => navigate("/settings/workspaces")}
                       className="flex items-center justify-between gap-3 py-3 text-left first:pt-0 last:pb-0 hover:opacity-80"
                     >
                       <span className="text-sm font-medium text-foreground">{workspace.name}</span>

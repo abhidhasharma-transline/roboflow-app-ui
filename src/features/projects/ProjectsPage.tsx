@@ -15,6 +15,7 @@ import { ProjectCard } from "@/components/shared/ProjectCard"
 import { FolderCard } from "./FolderCard"
 import { CreateFolderDialog } from "./CreateFolderDialog"
 import { CreateProjectDialog } from "./CreateProjectDialog"
+import { InviteMemberDialog } from "@/features/workspace/InviteMemberDialog"
 import { listProjects, listFolders } from "@/lib/projectApi"
 import { getWorkspace, listWorkspaceMembers } from "@/lib/workspaceApi"
 import { useWorkspaceStore } from "@/stores/workspaceStore"
@@ -34,6 +35,7 @@ export function ProjectsPage() {
   const [search, setSearch] = useState("")
   const [folderDialogOpen, setFolderDialogOpen] = useState(false)
   const [projectDialogOpen, setProjectDialogOpen] = useState(false)
+  const [inviteDialogOpen, setInviteDialogOpen] = useState(false)
   const [sortOrder, setSortOrder] = useState<SortOrder>("newest")
 
   const sortedProjects = useMemo(() => {
@@ -103,11 +105,9 @@ export function ProjectsPage() {
               </Avatar>
             ))}
           </div>
-          <Button variant="outline" asChild>
-            <Link to={`/settings/workspaces/${workspaceId}/members`}>
-              <UserPlus className="size-4" />
-              Invite Team
-            </Link>
+          <Button variant="outline" onClick={() => setInviteDialogOpen(true)}>
+            <UserPlus className="size-4" />
+            Invite Team
           </Button>
         </div>
       </div>
@@ -187,6 +187,12 @@ export function ProjectsPage() {
         open={projectDialogOpen}
         onOpenChange={setProjectDialogOpen}
         onCreated={refetch}
+      />
+      <InviteMemberDialog
+        workspaceId={workspaceId}
+        open={inviteDialogOpen}
+        onOpenChange={setInviteDialogOpen}
+        onInvited={refetch}
       />
     </div>
   )

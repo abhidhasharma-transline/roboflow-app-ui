@@ -41,6 +41,7 @@ export interface JobDetail {
   type: JobType
   instructions: string | null
   status: string
+  shuffle: boolean
   batch_id: string
   batch_name: string
   created_at: string
@@ -54,4 +55,34 @@ export interface JobImageSummary {
   id: string
   filename: string
   thumbnail_url: string | null
+  url: string
+}
+
+export interface JobSummary {
+  id: string
+  title: string
+  type: JobType
+  batch_id: string
+  batch_name: string
+  batch_created_at: string
+  total_images: number
+  annotated_count: number
+  unannotated_count: number
+  created_at: string
+  assignments: { user_id: string; name: string }[]
+}
+
+export interface JobActivityEntry {
+  id: string
+  action: string
+  user_name: string
+  user_email: string | null
+  created_at: string
+}
+
+export interface JobReviewerSummary {
+  user_id: string
+  name: string
+  email: string
+  status: string
 }
