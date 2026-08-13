@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from "react"
-import { Search, Plus } from "lucide-react"
+import { Search, Plus, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -11,6 +11,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog"
+import { InstructionsEditor } from "@/components/shared/InstructionsEditor"
 import { listProjectMembers, addProjectMember } from "@/lib/projectApi"
 import { listWorkspaceMembers, listWorkspaceInvitations } from "@/lib/workspaceApi"
 import { fullName, initials } from "@/lib/userDisplay"
@@ -117,6 +118,7 @@ export interface AssignTeamFieldsPayload {
   totalToAssign: number
   shuffle: boolean
   instructions: string
+  imageIds?: string[]
 }
 
 export interface AssignTeamFieldsHandle {
@@ -132,6 +134,8 @@ interface AssignTeamFieldsProps {
   initialShuffle?: boolean
   initialInstructions?: string
   initialSelectedLabelerIds?: string[]
+  /** Hand-picked images (e.g. selected on the batch grid) — assign exactly these instead of "first N". */
+  imageIds?: string[]
 }
 
 export const AssignTeamFields = forwardRef<AssignTeamFieldsHandle, AssignTeamFieldsProps>(
@@ -145,6 +149,7 @@ export const AssignTeamFields = forwardRef<AssignTeamFieldsHandle, AssignTeamFie
       initialShuffle = true,
       initialInstructions = "",
       initialSelectedLabelerIds,
+      imageIds,
     },
     ref
   ) {
@@ -206,7 +211,7 @@ export const AssignTeamFields = forwardRef<AssignTeamFieldsHandle, AssignTeamFie
     useImperativeHandle(ref, () => ({
       getPayload() {
         if (selectedLabelerIds.length === 0) return null
-        return { selectedLabelerIds, totalToAssign, shuffle, instructions }
+        return { selectedLabelerIds, totalToAssign, shuffle, instructions, imageIds }
       },
     }))
 
@@ -253,7 +258,8 @@ export const AssignTeamFields = forwardRef<AssignTeamFieldsHandle, AssignTeamFie
             className="flex-1"
             onClick={() => setInstructionsOpen((v) => !v)}
           >
-            {instructions ? "Edit Instructions" : "Add Instructions"}
+            {instructionsOpen && <X className="size-3.5" />}
+            {instructionsOpen ? "Add Instructions" : instructions ? "Edit Instructions" : "Add Instructions"}
           </Button>
           <Button variant="outline" size="sm" className="flex-1" onClick={() => setAddMemberOpen(true)}>
             <Plus className="size-3.5" />
@@ -262,12 +268,14 @@ export const AssignTeamFields = forwardRef<AssignTeamFieldsHandle, AssignTeamFie
         </div>
 
         {instructionsOpen && (
-          <textarea
-            value={instructions}
-            onChange={(e) => setInstructions(e.target.value)}
-            placeholder="Instructions for labelers…"
-            className="mb-4 min-h-20 w-full rounded-md border border-border p-2.5 text-sm"
-          />
+          <div className="mb-4">
+            <InstructionsEditor
+              value={instructions}
+              onChange={setInstructions}
+              onClose={() => setInstructionsOpen(false)}
+              onSave={() => setInstructionsOpen(false)}
+            />
+          </div>
         )}
 
         <div className="relative mb-3">

@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react"
+import { useState, useEffect } from "react"
 import { useParams, Link } from "react-router-dom"
-import { ClipboardList, Upload, MoreVertical, Info } from "lucide-react"
+import { ClipboardList, Upload, MoreVertical, Info, HelpCircle } from "lucide-react"
 import {
   Select,
   SelectTrigger,
@@ -15,11 +15,94 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu"
-import { listBatches, listJobs } from "@/lib/jobApi"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog"
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { TagInput } from "@/components/shared/TagInput"
+import {
+  listBatches, listJobs, renameBatch, tagBatchImages,
+  updateJobTitle, tagJobImages, moveJobToUnassigned, deleteJobAnnotations,
+} from "@/lib/jobApi"
+import { discardBatch } from "@/lib/uploadApi"
 import { useWorkspaceStore } from "@/stores/workspaceStore"
 import type { BatchSummary, JobSummary } from "@/types/job"
 
-function BatchCard({ batch, projectId }: { batch: BatchSummary; projectId: string }) {
+function ColumnHelp({ text }: { text: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger className="text-muted-foreground hover:text-foreground">
+        <HelpCircle className="size-3.5" />
+      </TooltipTrigger>
+      <TooltipContent className="max-w-64 text-left">{text}</TooltipContent>
+    </Tooltip>
+  )
+}
+
+function BatchCard({
+  batch,
+  projectId,
+  workspaceId,
+  onChanged,
+}: {
+  batch: BatchSummary
+  projectId: string
+  workspaceId: string
+  onChanged: () => void
+}) {
+  const [renameOpen, setRenameOpen] = useState(false)
+  const [renameValue, setRenameValue] = useState(batch.name)
+  const [renameSaving, setRenameSaving] = useState(false)
+
+  const [tagOpen, setTagOpen] = useState(false)
+  const [tagDraft, setTagDraft] = useState<string[]>([])
+  const [tagSaving, setTagSaving] = useState(false)
+
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+
+  async function handleRename(e: React.FormEvent) {
+    e.preventDefault()
+    if (!renameValue.trim()) return
+    setRenameSaving(true)
+    try {
+      await renameBatch(workspaceId, projectId, batch.id, renameValue.trim())
+      setRenameOpen(false)
+      onChanged()
+    } finally {
+      setRenameSaving(false)
+    }
+  }
+
+  async function handleApplyTags() {
+    if (tagDraft.length === 0) return
+    setTagSaving(true)
+    try {
+      await tagBatchImages(workspaceId, projectId, batch.id, tagDraft)
+      setTagOpen(false)
+      setTagDraft([])
+    } finally {
+      setTagSaving(false)
+    }
+  }
+
+  async function handleDelete() {
+    setDeleting(true)
+    try {
+      await discardBatch(workspaceId, projectId, batch.id)
+      setDeleteOpen(false)
+      onChanged()
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   return (
     <div className="rounded-lg border border-border p-4">
       <div className="mb-2 flex items-start justify-between">
@@ -31,9 +114,25 @@ function BatchCard({ batch, projectId }: { batch: BatchSummary; projectId: strin
           })}{" "}
           — {batch.name}
         </p>
-        <button className="text-muted-foreground hover:text-foreground">
-          <MoreVertical className="size-4" />
-        </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger className="shrink-0 text-muted-foreground hover:text-foreground">
+            <MoreVertical className="size-4" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem
+              onClick={() => {
+                setRenameValue(batch.name)
+                setRenameOpen(true)
+              }}
+            >
+              Rename Batch
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setTagOpen(true)}>Tag Images</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setDeleteOpen(true)} variant="destructive">
+              Delete Batch
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
       <p className="mb-3 text-sm text-foreground">
         {batch.unassigned_count} Unassigned Image{batch.unassigned_count !== 1 && "s"}
@@ -44,11 +143,77 @@ function BatchCard({ batch, projectId }: { batch: BatchSummary; projectId: strin
       >
         Annotate Images →
       </Link>
+
+      <Dialog open={renameOpen} onOpenChange={renameSaving ? undefined : setRenameOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Rename batch</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleRename} className="flex flex-col gap-4">
+            <Input value={renameValue} onChange={(e) => setRenameValue(e.target.value)} autoFocus />
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setRenameOpen(false)} disabled={renameSaving}>
+                Cancel
+              </Button>
+              <Button type="submit" variant="brand" disabled={renameSaving || !renameValue.trim()}>
+                {renameSaving ? "Saving…" : "Save"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={tagOpen} onOpenChange={tagSaving ? undefined : setTagOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Tag all images in this batch</DialogTitle>
+          </DialogHeader>
+          <TagInput value={tagDraft} onChange={setTagDraft} placeholder="Type a tag and press Enter…" />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTagOpen(false)} disabled={tagSaving}>
+              Cancel
+            </Button>
+            <Button variant="brand" onClick={handleApplyTags} disabled={tagSaving || tagDraft.length === 0}>
+              {tagSaving ? "Applying…" : "Apply Tags"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleteOpen} onOpenChange={deleting ? undefined : setDeleteOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete this batch?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            This permanently deletes all {batch.unassigned_count} unassigned image
+            {batch.unassigned_count !== 1 && "s"} in this batch. This can't be undone.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteOpen(false)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDelete} disabled={deleting}>
+              {deleting ? "Deleting…" : "Delete Batch"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
 
-function ActiveJobCard({ job, projectId }: { job: JobSummary; projectId: string }) {
+function ActiveJobCard({
+  job,
+  projectId,
+  workspaceId,
+  onChanged,
+}: {
+  job: JobSummary
+  projectId: string
+  workspaceId: string
+  onChanged: () => void
+}) {
   const percent = job.total_images === 0 ? 0 : Math.round((job.annotated_count / job.total_images) * 100)
 
   const labelerText =
@@ -57,6 +222,67 @@ function ActiveJobCard({ job, projectId }: { job: JobSummary; projectId: string 
       : job.assignments.length === 1
         ? job.assignments[0].name
         : `${job.assignments[0].name} +${job.assignments.length - 1} more`
+
+  const [renameOpen, setRenameOpen] = useState(false)
+  const [renameValue, setRenameValue] = useState(job.title)
+  const [renameSaving, setRenameSaving] = useState(false)
+
+  const [tagOpen, setTagOpen] = useState(false)
+  const [tagDraft, setTagDraft] = useState<string[]>([])
+  const [tagSaving, setTagSaving] = useState(false)
+
+  const [moveOpen, setMoveOpen] = useState(false)
+  const [moving, setMoving] = useState(false)
+
+  const [deleteAnnOpen, setDeleteAnnOpen] = useState(false)
+  const [deletingAnn, setDeletingAnn] = useState(false)
+
+  async function handleRename(e: React.FormEvent) {
+    e.preventDefault()
+    if (!renameValue.trim()) return
+    setRenameSaving(true)
+    try {
+      await updateJobTitle(workspaceId, projectId, job.id, renameValue.trim())
+      setRenameOpen(false)
+      onChanged()
+    } finally {
+      setRenameSaving(false)
+    }
+  }
+
+  async function handleApplyTags() {
+    if (tagDraft.length === 0) return
+    setTagSaving(true)
+    try {
+      await tagJobImages(workspaceId, projectId, job.id, tagDraft)
+      setTagOpen(false)
+      setTagDraft([])
+    } finally {
+      setTagSaving(false)
+    }
+  }
+
+  async function handleMove() {
+    setMoving(true)
+    try {
+      await moveJobToUnassigned(workspaceId, projectId, job.id)
+      setMoveOpen(false)
+      onChanged()
+    } finally {
+      setMoving(false)
+    }
+  }
+
+  async function handleDeleteAnnotations() {
+    setDeletingAnn(true)
+    try {
+      await deleteJobAnnotations(workspaceId, projectId, job.id)
+      setDeleteAnnOpen(false)
+      onChanged()
+    } finally {
+      setDeletingAnn(false)
+    }
+  }
 
   return (
     <div className="rounded-lg border border-border p-4">
@@ -80,11 +306,19 @@ function ActiveJobCard({ job, projectId }: { job: JobSummary; projectId: string 
             <MoreVertical className="size-4" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem>Rename Job</DropdownMenuItem>
-            <DropdownMenuItem>Tag Images</DropdownMenuItem>
-            <DropdownMenuItem>Move to unassigned</DropdownMenuItem>
-            <DropdownMenuItem>Download</DropdownMenuItem>
-            <DropdownMenuItem variant="destructive">Delete all annotations</DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => {
+                setRenameValue(job.title)
+                setRenameOpen(true)
+              }}
+            >
+              Rename Job
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setTagOpen(true)}>Tag Images</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setMoveOpen(true)}>Move to unassigned</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setDeleteAnnOpen(true)} variant="destructive">
+              Delete all annotations
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -95,7 +329,25 @@ function ActiveJobCard({ job, projectId }: { job: JobSummary; projectId: string 
         </p>
       )}
 
-      <Progress value={percent} className="mb-1.5" />
+      <div className="mb-1.5 flex items-center gap-1.5">
+        <Progress value={percent} className="flex-1" />
+        <Tooltip>
+          <TooltipTrigger className="shrink-0 text-muted-foreground hover:text-foreground">
+            <Info className="size-3.5" />
+          </TooltipTrigger>
+          <TooltipContent>
+            Uploaded{" "}
+            {new Date(job.batch_created_at).toLocaleDateString("en-US", {
+              month: "short", day: "numeric", year: "numeric",
+            })}{" "}
+            (
+            {new Date(job.batch_created_at).toLocaleTimeString("en-US", {
+              hour: "numeric", minute: "2-digit", hour12: true,
+            })}
+            )
+          </TooltipContent>
+        </Tooltip>
+      </div>
 
       <p className="mb-1 text-sm font-medium text-foreground">
         {job.total_images} Image{job.total_images !== 1 && "s"}
@@ -131,6 +383,82 @@ function ActiveJobCard({ job, projectId }: { job: JobSummary; projectId: string 
           Start Annotating →
         </Link>
       </div>
+
+      <Dialog open={renameOpen} onOpenChange={renameSaving ? undefined : setRenameOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Rename job</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleRename} className="flex flex-col gap-4">
+            <Input value={renameValue} onChange={(e) => setRenameValue(e.target.value)} autoFocus />
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setRenameOpen(false)} disabled={renameSaving}>
+                Cancel
+              </Button>
+              <Button type="submit" variant="brand" disabled={renameSaving || !renameValue.trim()}>
+                {renameSaving ? "Saving…" : "Save"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={tagOpen} onOpenChange={tagSaving ? undefined : setTagOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Tag all images in this job</DialogTitle>
+          </DialogHeader>
+          <TagInput value={tagDraft} onChange={setTagDraft} placeholder="Type a tag and press Enter…" />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTagOpen(false)} disabled={tagSaving}>
+              Cancel
+            </Button>
+            <Button variant="brand" onClick={handleApplyTags} disabled={tagSaving || tagDraft.length === 0}>
+              {tagSaving ? "Applying…" : "Apply Tags"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={moveOpen} onOpenChange={moving ? undefined : setMoveOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Move images back to unassigned?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            This job will be removed and its {job.total_images} image{job.total_images !== 1 && "s"} will
+            go back to the Unassigned column as a batch.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMoveOpen(false)} disabled={moving}>
+              Cancel
+            </Button>
+            <Button variant="brand" onClick={handleMove} disabled={moving}>
+              {moving ? "Moving…" : "Move to unassigned"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleteAnnOpen} onOpenChange={deletingAnn ? undefined : setDeleteAnnOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete all annotations in this job?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            All annotations on this job's images will be permanently deleted. Images revert to labeled
+            (unannotated). This can't be undone.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteAnnOpen(false)} disabled={deletingAnn}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDeleteAnnotations} disabled={deletingAnn}>
+              {deletingAnn ? "Deleting…" : "Delete all annotations"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -142,7 +470,7 @@ export function AnnotatePage() {
   const [activeJobs, setActiveJobs] = useState<JobSummary[]>([])
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
+  function refetch() {
     if (!workspaceId || !projectId) return
     Promise.all([
       listBatches(workspaceId, projectId, "unassigned"),
@@ -153,7 +481,9 @@ export function AnnotatePage() {
         setActiveJobs(jobs)
       })
       .finally(() => setLoading(false))
-  }, [workspaceId, projectId])
+  }
+
+  useEffect(refetch, [workspaceId, projectId])
 
   return (
     <div className="flex-1 overflow-y-auto p-8">
@@ -183,7 +513,10 @@ export function AnnotatePage() {
           {/* Unassigned — real batches */}
           <div className="flex flex-col rounded-xl border border-border">
             <div className="border-b border-border p-4 text-center">
-              <h2 className="text-base font-semibold text-foreground">Unassigned</h2>
+              <h2 className="flex items-center justify-center gap-1.5 text-base font-semibold text-foreground">
+                Unassigned
+                <ColumnHelp text="These are uploaded images that are auto-batched for easy assignment to users. These are images with no annotations and no assigned labelers." />
+              </h2>
               <p className="mt-0.5 text-xs text-muted-foreground">
                 {unassignedBatches.length} Batch{unassignedBatches.length !== 1 && "es"}
               </p>
@@ -201,7 +534,7 @@ export function AnnotatePage() {
                 </div>
               ) : (
                 unassignedBatches.map((b) => (
-                  <BatchCard key={b.id} batch={b} projectId={projectId!} />
+                  <BatchCard key={b.id} batch={b} projectId={projectId!} workspaceId={workspaceId!} onChanged={refetch} />
                 ))
               )}
             </div>
@@ -210,7 +543,10 @@ export function AnnotatePage() {
           {/* Annotating — real active jobs */}
           <div className="flex flex-col rounded-xl border border-border">
             <div className="border-b border-border p-4 text-center">
-              <h2 className="text-base font-semibold text-foreground">Annotating</h2>
+              <h2 className="flex items-center justify-center gap-1.5 text-base font-semibold text-foreground">
+                Annotating
+                <ColumnHelp text="Once a batch is assigned to a user for annotation, it will appear as an annotation job here. Moving a job back to unassigned sends its images back to the Unassigned column as a batch." />
+              </h2>
               <p className="mt-0.5 text-xs text-muted-foreground">
                 {activeJobs.length} Job{activeJobs.length !== 1 && "s"}
               </p>
@@ -224,7 +560,7 @@ export function AnnotatePage() {
                 </div>
               ) : (
                 activeJobs.map((job) => (
-                  <ActiveJobCard key={job.id} job={job} projectId={projectId!} />
+                  <ActiveJobCard key={job.id} job={job} projectId={projectId!} workspaceId={workspaceId!} onChanged={refetch} />
                 ))
               )}
             </div>
@@ -233,7 +569,10 @@ export function AnnotatePage() {
           {/* Dataset — same */}
           <div className="flex flex-col rounded-xl border border-border">
             <div className="border-b border-border p-4 text-center">
-              <h2 className="text-base font-semibold text-foreground">Dataset</h2>
+              <h2 className="flex items-center justify-center gap-1.5 text-base font-semibold text-foreground">
+                Dataset
+                <ColumnHelp text="Approved annotated images are added here to build your training dataset." />
+              </h2>
               <p className="mt-0.5 text-xs text-muted-foreground">0 Jobs</p>
             </div>
             <div className="flex flex-1 flex-col items-center justify-center gap-3 p-4 text-center">

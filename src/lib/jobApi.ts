@@ -39,6 +39,29 @@ export async function getBatch(
   return res.data
 }
 
+export async function renameBatch(
+  workspaceId: string,
+  projectId: string,
+  batchId: string,
+  name: string
+): Promise<{ id: string; name: string }> {
+  const res = await api.patch<{ id: string; name: string }>(
+    `${base(workspaceId, projectId)}/${batchId}`,
+    { name }
+  )
+  return res.data
+}
+
+export async function tagBatchImages(
+  workspaceId: string,
+  projectId: string,
+  batchId: string,
+  tagNames: string[]
+): Promise<{ tagged_images: number; links_created: number }> {
+  const res = await api.post(`${base(workspaceId, projectId)}/${batchId}/tags`, { tag_names: tagNames })
+  return res.data
+}
+
 export async function createJob(
   workspaceId: string,
   projectId: string,
@@ -49,6 +72,7 @@ export async function createJob(
     shuffle: boolean
     totalImages: number
     assigneeIds: string[]
+    imageIds?: string[]
   }
 ): Promise<JobCreateResponse> {
   const res = await api.post<JobCreateResponse>(`${base(workspaceId, projectId)}/${batchId}/jobs`, {
@@ -57,6 +81,7 @@ export async function createJob(
     shuffle: payload.shuffle,
     total_images: payload.totalImages,
     assignee_ids: payload.assigneeIds,
+    image_ids: payload.imageIds ?? [],
   })
   return res.data
 }
@@ -107,6 +132,19 @@ export async function updateJobInstructions(
   return res.data
 }
 
+export async function updateJobTitle(
+  workspaceId: string,
+  projectId: string,
+  jobId: string,
+  title: string
+): Promise<{ title: string }> {
+  const res = await api.patch<{ title: string }>(
+    `${jobsBase(workspaceId, projectId)}/${jobId}`,
+    { title }
+  )
+  return res.data
+}
+
 export async function reassignJob(
   workspaceId: string,
   projectId: string,
@@ -140,6 +178,34 @@ export async function submitForReview(
   await api.post(`${jobsBase(workspaceId, projectId)}/${jobId}/reviewers`, {
     reviewer_ids: reviewerIds,
   })
+}
+
+export async function tagJobImages(
+  workspaceId: string,
+  projectId: string,
+  jobId: string,
+  tagNames: string[]
+): Promise<{ tagged_images: number; links_created: number }> {
+  const res = await api.post(`${jobsBase(workspaceId, projectId)}/${jobId}/tags`, { tag_names: tagNames })
+  return res.data
+}
+
+export async function moveJobToUnassigned(
+  workspaceId: string,
+  projectId: string,
+  jobId: string
+): Promise<{ moved_images: number }> {
+  const res = await api.post(`${jobsBase(workspaceId, projectId)}/${jobId}/move-to-unassigned`)
+  return res.data
+}
+
+export async function deleteJobAnnotations(
+  workspaceId: string,
+  projectId: string,
+  jobId: string
+): Promise<{ deleted: number }> {
+  const res = await api.delete(`${jobsBase(workspaceId, projectId)}/${jobId}/annotations`)
+  return res.data
 }
 
 export async function listJobReviewers(

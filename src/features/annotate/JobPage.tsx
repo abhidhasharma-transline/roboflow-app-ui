@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react"
 import { useParams, useNavigate, Link } from "react-router-dom"
-import { X, Lock, Pencil, Check } from "lucide-react"
+import { X, Pencil, Check } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -13,8 +14,9 @@ import {
   SelectItem,
 } from "@/components/ui/select"
 import {
-  getJob, getJobImages, getJobActivity, updateJobInstructions, listJobReviewers,
+  getJob, getJobImages, getJobActivity, updateJobInstructions, updateJobTitle, listJobReviewers,
 } from "@/lib/jobApi"
+import { InstructionsEditor } from "@/components/shared/InstructionsEditor"
 import { useWorkspaceStore } from "@/stores/workspaceStore"
 import { ReassignJobDialog } from "./ReassignJobDialog"
 import { SubmitForReviewDialog } from "./SubmitForReviewDialog"
@@ -38,6 +40,10 @@ export function JobPage() {
   const [editingInstructions, setEditingInstructions] = useState(false)
   const [instructionsDraft, setInstructionsDraft] = useState("")
   const [savingInstructions, setSavingInstructions] = useState(false)
+
+  const [editingTitle, setEditingTitle] = useState(false)
+  const [titleDraft, setTitleDraft] = useState("")
+  const [savingTitle, setSavingTitle] = useState(false)
 
   const [reassignOpen, setReassignOpen] = useState(false)
   const [reviewOpen, setReviewOpen] = useState(false)
@@ -98,6 +104,33 @@ export function JobPage() {
     }
   }
 
+  function startEditingTitle() {
+    setTitleDraft(job?.title ?? "")
+    setEditingTitle(true)
+  }
+
+  async function saveTitle() {
+    if (!workspaceId || !projectId || !jobId || !titleDraft.trim()) return
+    setSavingTitle(true)
+    try {
+      const res = await updateJobTitle(workspaceId, projectId, jobId, titleDraft.trim())
+      setJob((prev) => (prev ? { ...prev, title: res.title } : prev))
+      setEditingTitle(false)
+      refetchActivity()
+    } finally {
+      setSavingTitle(false)
+    }
+  }
+
+  function handleImageCardClick(imageId: string) {
+    if (selectedImageIds.length > 0) {
+      toggleImageSelect(imageId)
+      return
+    }
+    if (!projectId || !job) return
+    navigate(`/projects/${projectId}/annotate/tool/${job.id}?image=${imageId}`)
+  }
+
   if (!job) {
     return <div className="flex-1 p-8 text-sm text-muted-foreground">Loading…</div>
   }
@@ -106,12 +139,7 @@ export function JobPage() {
     <div className="flex flex-1 overflow-hidden">
       {/* Left panel */}
       <div className="flex w-80 shrink-0 flex-col overflow-y-auto border-r border-border p-6">
-        <p className="mb-2 flex items-center gap-1.5 text-sm font-medium text-foreground">
-          {job.batch_name}
-          <button className="text-muted-foreground hover:text-foreground" title="Rename">
-            <Pencil className="size-3.5" />
-          </button>
-        </p>
+        <p className="mb-2 text-sm font-semibold text-foreground">Progress</p>
 
         <div className="mb-1 flex items-center justify-between">
           <Progress value={progressPercent} className="w-full" />
@@ -135,23 +163,13 @@ export function JobPage() {
             )}
           </div>
           {editingInstructions ? (
-            <div className="flex flex-col gap-2">
-              <textarea
-                value={instructionsDraft}
-                onChange={(e) => setInstructionsDraft(e.target.value)}
-                placeholder="Instructions for labelers…"
-                className="min-h-20 w-full rounded-md border border-border p-2 text-sm"
-                autoFocus
-              />
-              <div className="flex gap-2">
-                <Button size="sm" variant="outline" onClick={() => setEditingInstructions(false)}>
-                  Cancel
-                </Button>
-                <Button size="sm" variant="brand" onClick={saveInstructions} disabled={savingInstructions}>
-                  {savingInstructions ? "Saving…" : "Save"}
-                </Button>
-              </div>
-            </div>
+            <InstructionsEditor
+              value={instructionsDraft}
+              onChange={setInstructionsDraft}
+              onClose={() => setEditingInstructions(false)}
+              onSave={saveInstructions}
+              saving={savingInstructions}
+            />
           ) : (
             <p className="text-sm text-muted-foreground">
               {job.instructions || "No specific instructions were added when this job was assigned."}
@@ -249,13 +267,42 @@ export function JobPage() {
       {/* Main */}
       <div className="flex-1 overflow-y-auto p-8">
         <div className="mb-5 flex items-center justify-between">
-          <h1 className="text-xl font-semibold text-foreground">{job.batch_name}</h1>
+          {editingTitle ? (
+            <div className="flex items-center gap-2">
+              <Input
+                value={titleDraft}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                className="h-9 w-80 text-lg font-semibold"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") saveTitle()
+                  if (e.key === "Escape") setEditingTitle(false)
+                }}
+              />
+              <Button size="sm" variant="brand" onClick={saveTitle} disabled={savingTitle || !titleDraft.trim()}>
+                {savingTitle ? "Saving…" : "Save"}
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setEditingTitle(false)}>
+                Cancel
+              </Button>
+            </div>
+          ) : (
+            <div className="group flex items-center gap-1.5">
+              <h1 className="text-xl font-semibold text-foreground">{job.title}</h1>
+              <button
+                onClick={startEditingTitle}
+                className="text-muted-foreground opacity-0 hover:text-foreground group-hover:opacity-100"
+                title="Rename job"
+              >
+                <Pencil className="size-3.5" />
+              </button>
+            </div>
+          )}
           <div className="flex items-center gap-2">
             <Button variant="brand" asChild>
               <Link to={`/projects/${projectId}/annotate/tool/${job.id}`}>Start Annotating</Link>
             </Button>
             <Button variant="outline" onClick={() => setReviewOpen(true)}>
-              <Lock className="size-3.5" />
               Submit for Review
             </Button>
             <button
@@ -334,13 +381,15 @@ export function JobPage() {
               return (
                 <div key={img.id} className="group relative flex flex-col gap-1.5">
                   <div
-                    className={`relative aspect-[4/3] overflow-hidden rounded-md border bg-muted ${
+                    onClick={() => handleImageCardClick(img.id)}
+                    className={`relative aspect-[4/3] cursor-pointer overflow-hidden rounded-md border bg-muted ${
                       selected ? "border-brand ring-2 ring-brand/30" : "border-border"
                     }`}
                   >
                     <Checkbox
                       checked={selected}
                       onCheckedChange={() => toggleImageSelect(img.id)}
+                      onClick={(e) => e.stopPropagation()}
                       className="absolute top-1.5 left-1.5 z-10 bg-background/90 shadow-sm data-[state=unchecked]:opacity-0 group-hover:data-[state=unchecked]:opacity-100"
                     />
                     {img.thumbnail_url ? (

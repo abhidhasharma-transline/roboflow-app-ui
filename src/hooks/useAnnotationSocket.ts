@@ -37,7 +37,8 @@ function buildWsUrl(path: string, token: string) {
 export function useAnnotationSocket(
   workspaceId: string | undefined,
   projectId: string | undefined,
-  imageId: string | undefined
+  imageId: string | undefined,
+  currentUserId?: string
 ) {
   const token = useAuthStore((s) => s.token)
   const upsertAnnotation = useAnnotationStore((s) => s.upsertAnnotation)
@@ -70,6 +71,9 @@ export function useAnnotationSocket(
           removeAnnotation(msg.annotation_id)
           break
         case "drag_preview":
+          // The relay echoes to every connected client on this image, including
+          // the sender — don't show your own live draft back to yourself.
+          if (msg.user_id === currentUserId) break
           setRemoteDrafts((prev) => ({
             ...prev,
             [msg.temp_id]: {
@@ -133,7 +137,7 @@ export function useAnnotationSocket(
       wsRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceId, projectId, imageId, token])
+  }, [workspaceId, projectId, imageId, token, currentUserId])
 
   const sendDragPreview = useCallback(
     (shapeType: "bbox" | "polygon", geometry: Record<string, unknown>, tempId: string) => {

@@ -169,7 +169,7 @@ export function ProjectsPage() {
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
               {sortedProjects.map((project) => (
-                <ProjectCard key={project.id} project={project} />
+                <ProjectCard key={project.id} project={project} workspaceId={workspaceId} onChanged={refetch} />
               ))}
             </div>
           )}

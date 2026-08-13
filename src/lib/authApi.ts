@@ -58,12 +58,6 @@ export async function changePassword(payload: ChangePasswordRequest): Promise<{ 
   return res.data
 }
 
-/** Doesn't delete immediately — notifies the super admin(s) to action it. */
-export async function requestAccountDeletion(): Promise<{ message: string }> {
-  const res = await api.post<{ message: string }>("/auth/me/delete-request")
-  return res.data
-}
-
 export async function getMyActivity(weeks = 12): Promise<ActivityDay[]> {
   const res = await api.get<ActivityDay[]>("/auth/me/activity", { params: { weeks } })
   return res.data

@@ -42,6 +42,17 @@ export async function deleteProject(workspaceId: string, projectId: string): Pro
   return res.data
 }
 
+export async function moveProject(
+  workspaceId: string,
+  projectId: string,
+  folderId: string | null
+): Promise<Project> {
+  const res = await api.patch<Project>(`${base(workspaceId)}/projects/${projectId}/folder`, {
+    folder_id: folderId,
+  })
+  return res.data
+}
+
 export async function createProject(
   workspaceId: string,
   payload: {

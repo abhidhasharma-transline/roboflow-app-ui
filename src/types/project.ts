@@ -18,6 +18,7 @@ export interface Project {
   folder_id: string | null
   is_active: boolean
   created_at: string
+  thumbnail_url: string | null
 }
 
 export interface ProjectFolder {

@@ -1,15 +1,16 @@
 import { useEffect, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
-import { LogOut, ShieldCheck, AlertTriangle, User as UserIcon, Building2 } from "lucide-react"
+import { LogOut, ShieldCheck, User as UserIcon, Building2, Plus } from "lucide-react"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { SectionHeading } from "@/components/shared/SectionHeading"
+import { CreateWorkspaceDialog } from "@/components/layout/CreateWorkspaceDialog"
 import { useAuthStore } from "@/stores/authStore"
 import { listWorkspaces, listWorkspaceMembers } from "@/lib/workspaceApi"
-import { updateMe, requestAccountDeletion } from "@/lib/authApi"
+import { updateMe } from "@/lib/authApi"
 import { fullName, initials, roleLabel } from "@/lib/userDisplay"
 import { ActivityStreakCard } from "./ActivityStreakCard"
 import { ChangePasswordDialog } from "./ChangePasswordDialog"
@@ -33,11 +34,9 @@ export function AccountSettingsPage() {
 
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false)
 
-  const [confirmingDelete, setConfirmingDelete] = useState(false)
-  const [deleteRequested, setDeleteRequested] = useState(false)
-
   const [workspaceRows, setWorkspaceRows] = useState<WorkspaceRow[]>([])
   const [isLoadingWorkspaces, setIsLoadingWorkspaces] = useState(true)
+  const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false)
 
   const isSuperAdmin = user?.role === "super_admin"
 
@@ -48,7 +47,8 @@ export function AccountSettingsPage() {
     setPhone(user.phone ?? "")
   }, [user])
 
-  useEffect(() => {
+  function refetchWorkspaces() {
+    setIsLoadingWorkspaces(true)
     listWorkspaces()
       .then(async (workspaces) => {
         const rows = await Promise.all(
@@ -62,8 +62,10 @@ export function AccountSettingsPage() {
       })
       .catch((err) => console.error("Workspace error:", err))
       .finally(() => setIsLoadingWorkspaces(false))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(refetchWorkspaces, [])
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault()
@@ -84,12 +86,6 @@ export function AccountSettingsPage() {
     } finally {
       setIsSaving(false)
     }
-  }
-
-  async function handleDeleteRequest() {
-    await requestAccountDeletion()
-    setDeleteRequested(true)
-    setConfirmingDelete(false)
   }
 
   return (
@@ -179,34 +175,11 @@ export function AccountSettingsPage() {
               </div>
             </form>
 
-            <div className="mt-6 flex items-center justify-between border-t border-border pt-5">
+            <div className="mt-6 border-t border-border pt-5">
               <Button variant="outline" onClick={logout}>
                 <LogOut className="size-4" />
                 Sign Out
               </Button>
-
-              {deleteRequested ? (
-                <p className="text-sm text-muted-foreground">Deletion request sent.</p>
-              ) : confirmingDelete ? (
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-muted-foreground">Are you sure?</span>
-                  <Button variant="destructive" size="sm" onClick={handleDeleteRequest}>
-                    Confirm
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => setConfirmingDelete(false)}>
-                    Cancel
-                  </Button>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setConfirmingDelete(true)}
-                  className="flex items-center gap-1.5 text-sm text-destructive hover:underline"
-                >
-                  <AlertTriangle className="size-3.5" />
-                  Delete Account
-                </button>
-              )}
             </div>
           </div>
 
@@ -215,7 +188,13 @@ export function AccountSettingsPage() {
             <ActivityStreakCard />
 
             <div className="rounded-lg border border-border p-5">
-              <SectionHeading icon={Building2}>Workspaces</SectionHeading>
+              <div className="mb-4 flex items-center justify-between">
+                <SectionHeading icon={Building2}>Workspaces</SectionHeading>
+                <Button variant="outline" size="sm" onClick={() => setCreateWorkspaceOpen(true)}>
+                  <Plus className="size-3.5" />
+                  Create Workspace
+                </Button>
+              </div>
 
               {isLoadingWorkspaces ? (
                 <p className="text-sm text-muted-foreground">Loading…</p>
@@ -230,7 +209,7 @@ export function AccountSettingsPage() {
                       className="flex items-center justify-between gap-3 py-3 text-left first:pt-0 last:pb-0 hover:opacity-80"
                     >
                       <span className="text-sm font-medium text-foreground">{workspace.name}</span>
-                      {isSuperAdmin && !myMembership ? (
+                      {isSuperAdmin ? (
                         <Badge variant="secondary">Super Admin</Badge>
                       ) : myMembership ? (
                         <Badge variant="secondary">{roleLabel(myMembership.role)}</Badge>
@@ -245,6 +224,11 @@ export function AccountSettingsPage() {
       </div>
 
       <ChangePasswordDialog open={passwordDialogOpen} onOpenChange={setPasswordDialogOpen} />
+      <CreateWorkspaceDialog
+        open={createWorkspaceOpen}
+        onOpenChange={setCreateWorkspaceOpen}
+        onCreated={refetchWorkspaces}
+      />
     </div>
   )
 }

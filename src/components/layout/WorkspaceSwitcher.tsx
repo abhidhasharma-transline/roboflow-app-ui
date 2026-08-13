@@ -1,22 +1,25 @@
 import { useEffect, useState } from "react"
 import { useNavigate } from "react-router-dom"
-import { ChevronsUpDown, Check } from "lucide-react"
+import { ChevronsUpDown, Check, Plus } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu"
 import { listWorkspaces, getWorkspace } from "@/lib/workspaceApi"
 import { useWorkspaceStore } from "@/stores/workspaceStore"
 import { useAuthStore } from "@/stores/authStore"
 import type { Workspace } from "@/types/workspace"
+import { CreateWorkspaceDialog } from "./CreateWorkspaceDialog"
 
 export function WorkspaceSwitcher({ collapsed }: { collapsed?: boolean }) {
   const navigate = useNavigate()
   const user = useAuthStore((s) => s.user)
   const { activeWorkspaceId, activeWorkspaceName, setActiveWorkspace } = useWorkspaceStore()
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
+  const [createOpen, setCreateOpen] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -85,7 +88,7 @@ export function WorkspaceSwitcher({ collapsed }: { collapsed?: boolean }) {
           Your workspaces
         </p>
         {workspaces.length === 0 ? (
-          <p className="px-2 py-1.5 text-sm text-muted-foreground">Loading…</p>
+          <p className="px-2 py-1.5 text-sm text-muted-foreground">No workspaces yet</p>
         ) : (
           workspaces.map((ws) => (
             <DropdownMenuItem key={ws.id} onClick={() => selectWorkspace(ws)}>
@@ -99,7 +102,22 @@ export function WorkspaceSwitcher({ collapsed }: { collapsed?: boolean }) {
             </DropdownMenuItem>
           ))
         )}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={() => setCreateOpen(true)}>
+          <Plus className="size-3.5" />
+          Create Workspace
+        </DropdownMenuItem>
       </DropdownMenuContent>
+
+      <CreateWorkspaceDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        onCreated={(ws) => {
+          setWorkspaces((prev) => [...prev, ws])
+          setActiveWorkspace(ws.id, ws.name)
+          navigate("/projects")
+        }}
+      />
     </DropdownMenu>
   )
 }
