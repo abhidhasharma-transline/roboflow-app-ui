@@ -6,8 +6,17 @@ export interface ImageTag {
   is_active: boolean
 }
 
+export interface ImageMetadataItem {
+  key: string
+  value: string
+}
+
 function imageTagsBase(workspaceId: string, projectId: string, imageId: string) {
   return `/workspaces/${workspaceId}/projects/${projectId}/images/${imageId}/tags`
+}
+
+function imageMetadataBase(workspaceId: string, projectId: string, imageId: string) {
+  return `/workspaces/${workspaceId}/projects/${projectId}/images/${imageId}/metadata`
 }
 
 /** All tags defined on the project (for filter dropdowns, not per-image). */
@@ -55,6 +64,26 @@ export async function bulkApplyTags(
     { image_ids: imageIds, tag_names: tagNames }
   )
   return res.data
+}
+
+export async function addImageMetadata(
+  workspaceId: string,
+  projectId: string,
+  imageId: string,
+  key: string,
+  value: string
+): Promise<ImageMetadataItem> {
+  const res = await api.post<ImageMetadataItem>(imageMetadataBase(workspaceId, projectId, imageId), { key, value })
+  return res.data
+}
+
+export async function removeImageMetadata(
+  workspaceId: string,
+  projectId: string,
+  imageId: string,
+  key: string
+): Promise<void> {
+  await api.delete(`${imageMetadataBase(workspaceId, projectId, imageId)}/${encodeURIComponent(key)}`)
 }
 
 export async function bulkApplyMetadata(

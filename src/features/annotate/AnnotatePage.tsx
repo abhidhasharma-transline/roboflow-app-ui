@@ -32,6 +32,7 @@ import {
 } from "@/lib/jobApi"
 import { discardBatch } from "@/lib/uploadApi"
 import { useWorkspaceStore } from "@/stores/workspaceStore"
+import { useToastStore } from "@/stores/toastStore"
 import type { BatchSummary, JobSummary } from "@/types/job"
 
 function ColumnHelp({ text }: { text: string }) {
@@ -92,12 +93,17 @@ function BatchCard({
     }
   }
 
+  const addToast = useToastStore((s) => s.addToast)
+
   async function handleDelete() {
     setDeleting(true)
     try {
       await discardBatch(workspaceId, projectId, batch.id)
       setDeleteOpen(false)
       onChanged()
+      addToast({ variant: "success", title: "Batch deleted", description: batch.name })
+    } catch {
+      addToast({ variant: "error", title: "Couldn't delete batch", description: "Please try again." })
     } finally {
       setDeleting(false)
     }
@@ -262,12 +268,17 @@ function ActiveJobCard({
     }
   }
 
+  const addToast = useToastStore((s) => s.addToast)
+
   async function handleMove() {
     setMoving(true)
     try {
       await moveJobToUnassigned(workspaceId, projectId, job.id)
       setMoveOpen(false)
       onChanged()
+      addToast({ variant: "success", title: "Moved to unassigned", description: job.title })
+    } catch {
+      addToast({ variant: "error", title: "Couldn't move to unassigned", description: "Please try again." })
     } finally {
       setMoving(false)
     }
@@ -279,6 +290,9 @@ function ActiveJobCard({
       await deleteJobAnnotations(workspaceId, projectId, job.id)
       setDeleteAnnOpen(false)
       onChanged()
+      addToast({ variant: "success", title: "Annotations deleted", description: job.title })
+    } catch {
+      addToast({ variant: "error", title: "Couldn't delete annotations", description: "Please try again." })
     } finally {
       setDeletingAnn(false)
     }

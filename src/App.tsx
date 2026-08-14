@@ -22,6 +22,7 @@ import { UsersSettingsPage } from "@/features/settings/UsersSettingsPage"
 import { WorkspaceMembersPage } from "@/features/settings/WorkspaceMembersPage"
 import { InvitationAcceptPage } from "@/features/workspace/InvitationAcceptPage"
 import { NotificationsPage } from "@/features/notifications/NotificationsPage"
+import { ToastContainer } from "@/components/shared/ToastContainer"
 import { useAuthStore } from "@/stores/authStore"
 import { useDefaultWorkspace } from "@/hooks/useDefaultWorkspace"
 
@@ -48,6 +49,7 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 function App() {
   return (
     <BrowserRouter>
+      <ToastContainer />
       <Routes>
         {/* Public routes */}
         <Route path="/login" element={<LoginPage />} />

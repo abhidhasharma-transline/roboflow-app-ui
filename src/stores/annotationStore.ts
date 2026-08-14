@@ -1,7 +1,7 @@
 import { create } from "zustand"
 import type { Annotation } from "@/types/annotation"
 
-export type AnnotationTool = "select" | "bbox" | "polygon"
+export type AnnotationTool = "select" | "bbox" | "polygon" | "brush" | "comment"
 
 interface AnnotationState {
   activeTool: AnnotationTool
