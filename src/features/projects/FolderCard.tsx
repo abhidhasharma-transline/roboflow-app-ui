@@ -9,7 +9,7 @@ export function FolderCard({
   return (
     <Link
       to={`/projects/folders/${folder.id}`}
-      className="group flex items-center gap-3 rounded-lg border border-border bg-card p-4 transition-shadow hover:shadow-md"
+      className="group flex items-center gap-3 rounded-lg border border-border bg-card p-4 transition-all duration-200 hover:border-brand/30 hover:shadow-[0_0_18px_-6px_rgba(168,85,247,0.25)]"
     >
       <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
         <Folder className="size-5" />

@@ -132,6 +132,54 @@ export async function saveBatch(
   return res.data
 }
 
+/** POST /upload/batch/{id}/images — add more files to an already-committed batch (review stage). */
+export async function appendImagesToBatch(
+  workspaceId: string,
+  projectId: string,
+  batchId: string,
+  files: File[],
+  folderName?: string,
+  onProgress?: (percent: number) => void
+): Promise<UploadImagesResponse> {
+  const form = new FormData()
+  files.forEach((file) => form.append("files", file))
+  form.append("folder_name", folderName ?? "")
+
+  const res = await api.post<UploadImagesResponse>(
+    `${uploadBase(workspaceId, projectId)}/batch/${batchId}/images`,
+    form,
+    {
+      headers: { "Content-Type": "multipart/form-data" },
+      onUploadProgress: (e) => {
+        if (onProgress && e.total) onProgress(Math.round((e.loaded / e.total) * 100))
+      },
+    }
+  )
+  return res.data
+}
+
+/**
+ * DELETE /upload/batch/{id} — discard a batch that was committed (via
+ * uploadImages or video extraction) but never finalized with saveBatch().
+ * Uses fetch with keepalive so it can fire reliably from a beforeunload
+ * handler (axios/XHR requests get cancelled on page unload; fetch with
+ * keepalive:true is specifically designed to survive it — unlike
+ * navigator.sendBeacon, it still lets us send the auth header).
+ */
+export async function discardBatch(
+  workspaceId: string,
+  projectId: string,
+  batchId: string
+): Promise<void> {
+  const token = localStorage.getItem("auth_token") ?? ""
+  const base = api.defaults.baseURL ?? ""
+  await fetch(`${base}${uploadBase(workspaceId, projectId)}/batch/${batchId}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+    keepalive: true,
+  })
+}
+
 /** Builds the ws:// or wss:// URL for the extraction-progress socket. */
 export function extractionSocketUrl(
   workspaceId: string,

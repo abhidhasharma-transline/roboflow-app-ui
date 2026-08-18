@@ -23,6 +23,7 @@ export function RegisterPage() {
 
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [registrationClosed, setRegistrationClosed] = useState(false)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -48,7 +49,11 @@ export function RegisterPage() {
 
       navigate("/projects")
     } catch (err) {
-      setError(extractErrorMessage(err))
+      if (isRegistrationClosedError(err)) {
+        setRegistrationClosed(true)
+      } else {
+        setError(extractErrorMessage(err))
+      }
     } finally {
       setIsLoading(false)
     }
@@ -63,29 +68,43 @@ export function RegisterPage() {
       </div>
 
       {/* RIGHT */}
-      <div className="flex items-center justify-center border-l border-white/5 bg-[#111118] px-10">
+      <div className="flex items-center justify-center border-l border-white/5 bg-[#111118] px-8">
 
-        <div className="w-full max-w-[430px]">
+        <div className="w-full max-w-[360px]">
 
-          <LogoMark className="mb-8 h-11 w-11" />
+          <LogoMark className="mb-6 h-9 w-9" />
 
-          <h1 className="text-3xl font-bold text-white">
+          <h1 className="text-2xl font-bold text-white">
             Create your account
           </h1>
 
-          <p className="mt-2 mb-8 text-sm text-zinc-400">
+          <p className="mt-1.5 mb-6 text-xs text-zinc-400">
             Start building computer vision datasets in minutes.
           </p>
 
+          {registrationClosed ? (
+            <div className="space-y-4">
+              <p className="rounded-md border border-white/10 bg-[#17171F] p-3.5 text-xs text-zinc-300">
+                Registration is closed — ask your super admin for an account.
+                You'll receive an email with a link to set your password once
+                one is created for you.
+              </p>
+              <Link to="/login">
+                <Button className="w-full h-9 text-sm bg-violet-600 hover:bg-violet-500">
+                  Go to Sign In
+                </Button>
+              </Link>
+            </div>
+          ) : (
           <form
             onSubmit={handleSubmit}
-            className="space-y-5"
+            className="space-y-3.5"
           >
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-3">
 
-              <div className="space-y-2">
-                <Label className="text-zinc-300">
+              <div className="space-y-1.5">
+                <Label className="text-xs text-zinc-300">
                   First Name
                 </Label>
 
@@ -93,12 +112,12 @@ export function RegisterPage() {
                   value={firstName}
                   onChange={(e) => setFirstName(e.target.value)}
                   placeholder="John"
-                  className="h-11 bg-[#17171F] border-white/10 text-white placeholder:text-zinc-500"
+                  className="h-9 text-sm bg-[#17171F] border-white/10 text-white placeholder:text-zinc-500"
                 />
               </div>
 
-              <div className="space-y-2">
-                <Label className="text-zinc-300">
+              <div className="space-y-1.5">
+                <Label className="text-xs text-zinc-300">
                   Last Name
                 </Label>
 
@@ -106,15 +125,15 @@ export function RegisterPage() {
                   value={lastName}
                   onChange={(e) => setLastName(e.target.value)}
                   placeholder="Doe"
-                  className="h-11 bg-[#17171F] border-white/10 text-white placeholder:text-zinc-500"
+                  className="h-9 text-sm bg-[#17171F] border-white/10 text-white placeholder:text-zinc-500"
                 />
               </div>
 
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-1.5">
 
-              <Label className="text-zinc-300">
+              <Label className="text-xs text-zinc-300">
                 Username
               </Label>
 
@@ -122,14 +141,14 @@ export function RegisterPage() {
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="john_doe"
-                className="h-11 bg-[#17171F] border-white/10 text-white placeholder:text-zinc-500"
+                className="h-9 text-sm bg-[#17171F] border-white/10 text-white placeholder:text-zinc-500"
               />
 
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-1.5">
 
-              <Label className="text-zinc-300">
+              <Label className="text-xs text-zinc-300">
                 Email
               </Label>
 
@@ -138,14 +157,14 @@ export function RegisterPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@company.com"
-                className="h-11 bg-[#17171F] border-white/10 text-white placeholder:text-zinc-500"
+                className="h-9 text-sm bg-[#17171F] border-white/10 text-white placeholder:text-zinc-500"
               />
 
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-1.5">
 
-              <Label className="text-zinc-300">
+              <Label className="text-xs text-zinc-300">
                 Password
               </Label>
 
@@ -154,13 +173,13 @@ export function RegisterPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Minimum 8 characters"
-                className="h-11 bg-[#17171F] border-white/10 text-white placeholder:text-zinc-500"
+                className="h-9 text-sm bg-[#17171F] border-white/10 text-white placeholder:text-zinc-500"
               />
 
             </div>
 
             {error && (
-              <p className="text-sm text-red-400">
+              <p className="text-xs text-red-400">
                 {error}
               </p>
             )}
@@ -168,7 +187,7 @@ export function RegisterPage() {
             <Button
               type="submit"
               disabled={isLoading}
-              className="w-full h-11 bg-violet-600 hover:bg-violet-500"
+              className="w-full h-9 text-sm bg-violet-600 hover:bg-violet-500"
             >
               {isLoading
                 ? "Creating account..."
@@ -176,37 +195,42 @@ export function RegisterPage() {
             </Button>
 
           </form>
+          )}
 
-          <div className="relative my-8">
+          {!registrationClosed && (
+            <>
+              <div className="relative my-5">
 
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-white/10" />
-            </div>
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-white/10" />
+                </div>
 
-            <div className="relative flex justify-center">
-              <span className="bg-[#111118] px-4 text-xs text-zinc-500">
-                OR
-              </span>
-            </div>
+                <div className="relative flex justify-center">
+                  <span className="bg-[#111118] px-3 text-[11px] text-zinc-500">
+                    OR
+                  </span>
+                </div>
 
-          </div>
+              </div>
 
-          <Button
-            variant="outline"
-            className="w-full h-11 border-white/10 bg-transparent text-white hover:bg-white/5"
-          >
-            Continue with Google
-          </Button>
+              <Button
+                variant="outline"
+                className="w-full h-9 text-sm border-white/10 bg-transparent text-white hover:bg-white/5"
+              >
+                Continue with Google
+              </Button>
 
-          <p className="mt-8 text-center text-sm text-zinc-400">
-            Already have an account?{" "}
-            <Link
-              to="/login"
-              className="font-medium text-violet-400 hover:text-violet-300"
-            >
-              Sign In
-            </Link>
-          </p>
+              <p className="mt-6 text-center text-xs text-zinc-400">
+                Already have an account?{" "}
+                <Link
+                  to="/login"
+                  className="font-medium text-violet-400 hover:text-violet-300"
+                >
+                  Sign In
+                </Link>
+              </p>
+            </>
+          )}
 
         </div>
 
@@ -240,4 +264,10 @@ function extractErrorMessage(err: unknown): string {
   }
 
   return "Registration failed. Please try again."
+}
+
+function isRegistrationClosedError(err: unknown): boolean {
+  if (typeof err !== "object" || err === null || !("response" in err)) return false
+  const status = (err as { response?: { status?: number } }).response?.status
+  return status === 403
 }

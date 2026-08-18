@@ -1,5 +1,6 @@
 import { useState } from "react"
-import { NavLink, useParams, Link, useNavigate } from "react-router-dom"
+import { useParams, Link, useNavigate } from "react-router-dom"
+import { GuardedNavLink as NavLink } from "./GuardedNavLink"
 import {
   ArrowLeft,
   ChevronDown,
@@ -104,7 +105,7 @@ export function ProjectSidebar() {
 
   const dataItems: SubNavItem[] = [
     { label: "Upload Data", icon: Upload, path: `/projects/${projectId}/upload` },
-    { label: "Annotate", icon: ImageIcon, disabled: true },
+    { label: "Annotate", icon: ImageIcon, path: `/projects/${projectId}/annotate` },
     {
       label: "Dataset",
       icon: Database,

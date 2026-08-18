@@ -1,16 +1,11 @@
 // Mirrors app/workspace/schema.py.
-//
-// NOTE: the backend's WorkspaceResponse currently only returns
-// { id, is_active, created_at } — no name/slug/owner_id. name/slug are kept
-// here as optional so the UI can show them the moment the backend adds them
-// back (recommended — MyInvitationResponse.workspace_name already implies
-// the Workspace model has a name column, it's just not exposed on this
-// response yet).
+import type { WorkspaceRole } from "@/types/auth"
+
 export interface Workspace {
   id: string
-  name?: string
-  slug?: string
-  owner_id?: string
+  name: string
+  slug: string
+  owner_id: string
   is_active: boolean
   created_at: string
 }
@@ -22,6 +17,9 @@ export interface WorkspaceMember {
   username: string
   first_name?: string
   last_name?: string
+  role: WorkspaceRole
+  permission_overrides: Record<string, boolean> | null
+  has_full_project_access: boolean
   joined_at: string
 }
 
@@ -33,6 +31,7 @@ export interface WorkspaceInvitation {
   id: string
   email: string
   status: InvitationStatus
+  role: WorkspaceRole
   invited_by: string
   created_at: string
   expires_at: string
@@ -45,7 +44,16 @@ export interface MyInvitation {
   workspace_id: string
   workspace_name: string
   invited_by: string
+  role: WorkspaceRole
   token: string
   created_at: string
   expires_at: string
+}
+
+// Payload shape shared by "invite a member" and "edit an existing member" —
+// mirrors app/workspace/schema.py's InviteMemberRequest / the PATCH member body.
+export interface MemberAccessPayload {
+  role: WorkspaceRole
+  permissions: Record<string, boolean> | null
+  project_ids: string[] | null
 }

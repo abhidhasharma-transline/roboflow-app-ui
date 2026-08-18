@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { useParams, Link } from "react-router-dom"
-import { ArrowLeft, UserPlus, X } from "lucide-react"
+import { ArrowLeft, UserPlus, X, Pencil, Boxes } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
@@ -11,16 +11,24 @@ import {
   cancelInvitation,
 } from "@/lib/workspaceApi"
 import { InviteMemberDialog } from "@/features/workspace/InviteMemberDialog"
-import { initials } from "@/lib/userDisplay"
+import { EditMemberDialog } from "@/features/workspace/EditMemberDialog"
+import { useProjects } from "@/hooks/useProjects"
+import { useAuthStore } from "@/stores/authStore"
+import { initials, roleLabel } from "@/lib/userDisplay"
+import { grantedPermissions, PERMISSION_LABELS } from "@/lib/permissions"
 import type { Workspace, WorkspaceMember, WorkspaceInvitation } from "@/types/workspace"
 
 export function WorkspaceMembersPage() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
+  const currentUser = useAuthStore((s) => s.user)
   const [workspace, setWorkspace] = useState<Workspace | null>(null)
   const [members, setMembers] = useState<WorkspaceMember[]>([])
   const [pendingInvites, setPendingInvites] = useState<WorkspaceInvitation[] | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [editingMember, setEditingMember] = useState<WorkspaceMember | null>(null)
+
+  const { projects } = useProjects(workspaceId ?? null)
 
   function refetch() {
     if (!workspaceId) return
@@ -49,22 +57,32 @@ export function WorkspaceMembersPage() {
     setPendingInvites((prev) => prev?.filter((i) => i.id !== invitationId) ?? prev)
   }
 
-  const isOwner = pendingInvites !== null // we could only fetch it if we're the owner
+  const canManage =
+    currentUser?.role === "super_admin" ||
+    (!!workspace && !!currentUser && workspace.owner_id === currentUser.id)
 
   return (
     <div className="flex-1 overflow-y-auto p-8">
       <div className="mx-auto max-w-3xl">
         <Link
-          to="/settings/account"
+          to="/settings/workspaces"
           className="mb-4 flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="size-4" />
-          Account Settings
+          Workspaces
         </Link>
 
         <h1 className="mb-6 text-2xl font-semibold text-foreground">
           {workspace?.name ?? "Workspace"} Settings
         </h1>
+
+        <div className="mb-8 flex items-center justify-between gap-4 rounded-lg border border-border p-5">
+          <div className="flex items-center gap-2.5 text-sm text-foreground">
+            <Boxes className="size-4 text-muted-foreground" />
+            <span className="font-medium">{projects.length}</span> project
+            {projects.length !== 1 && "s"} in this workspace
+          </div>
+        </div>
 
         <div className="mb-8 flex items-start justify-between gap-4 rounded-lg border border-border p-5">
           <div>
@@ -72,12 +90,12 @@ export function WorkspaceMembersPage() {
               Members and Roles
             </h2>
             <p className="text-sm text-muted-foreground">
-              {isOwner
+              {canManage
                 ? "Invite users to this workspace by email. They'll become members after accepting."
                 : "People with access to this workspace."}
             </p>
           </div>
-          {isOwner && (
+          {canManage && (
             <Button variant="brand" onClick={() => setDialogOpen(true)} className="shrink-0">
               <UserPlus className="size-4" />
               Invite Members
@@ -85,7 +103,7 @@ export function WorkspaceMembersPage() {
           )}
         </div>
 
-        {isOwner && pendingInvites && pendingInvites.length > 0 && (
+        {canManage && pendingInvites && pendingInvites.length > 0 && (
           <>
             <h2 className="mb-3 text-base font-semibold text-foreground">
               Pending Invitations
@@ -98,6 +116,7 @@ export function WorkspaceMembersPage() {
                 >
                   <div className="flex items-center gap-2.5">
                     <span className="text-foreground">{invite.email}</span>
+                    <Badge variant="secondary">{roleLabel(invite.role)}</Badge>
                     <Badge variant="warning">Pending</Badge>
                   </div>
                   <button
@@ -125,7 +144,9 @@ export function WorkspaceMembersPage() {
               <thead className="border-b border-border bg-muted/40 text-left text-xs font-medium text-muted-foreground uppercase">
                 <tr>
                   <th className="px-4 py-2.5">Name</th>
-                  <th className="px-4 py-2.5">Joined</th>
+                  <th className="px-4 py-2.5">Role</th>
+                  <th className="px-4 py-2.5">Can</th>
+                  <th className="px-4 py-2.5" />
                 </tr>
               </thead>
               <tbody>
@@ -139,13 +160,48 @@ export function WorkspaceMembersPage() {
                           </AvatarFallback>
                         </Avatar>
                         <div>
-                          <p className="font-medium text-foreground">{m.username}</p>
+                          <p className="font-medium text-foreground">
+                            {m.username}
+                            {m.user_id === currentUser?.id && (
+                              <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                                (you)
+                              </span>
+                            )}
+                          </p>
                           <p className="text-xs text-muted-foreground">{m.email}</p>
                         </div>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-muted-foreground">
-                      {new Date(m.joined_at).toLocaleDateString()}
+                    <td className="px-4 py-3">
+                      <div className="flex flex-col gap-1">
+                        <Badge variant="secondary">{roleLabel(m.role)}</Badge>
+                        {!m.has_full_project_access && (
+                          <span className="text-xs text-muted-foreground">Limited access</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap gap-1">
+                        {grantedPermissions(m.role, m.permission_overrides).map((key) => (
+                          <Badge key={key} variant="outline" className="text-[11px]">
+                            {PERMISSION_LABELS[key]}
+                          </Badge>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      {/* Owner/SA can manage everyone else, but never themselves here —
+                          their own access isn't governed by this row (owner authority /
+                          super_admin bypass), and editing it risks a confusing self-lockout. */}
+                      {canManage && m.user_id !== currentUser?.id && (
+                        <button
+                          onClick={() => setEditingMember(m)}
+                          className="text-muted-foreground hover:text-foreground"
+                          aria-label={`Edit ${m.username}`}
+                        >
+                          <Pencil className="size-4" />
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -156,12 +212,21 @@ export function WorkspaceMembersPage() {
       </div>
 
       {workspaceId && (
-        <InviteMemberDialog
-          workspaceId={workspaceId}
-          open={dialogOpen}
-          onOpenChange={setDialogOpen}
-          onInvited={refetch}
-        />
+        <>
+          <InviteMemberDialog
+            workspaceId={workspaceId}
+            open={dialogOpen}
+            onOpenChange={setDialogOpen}
+            onInvited={refetch}
+          />
+          <EditMemberDialog
+            workspaceId={workspaceId}
+            member={editingMember}
+            open={editingMember !== null}
+            onOpenChange={(v) => !v && setEditingMember(null)}
+            onUpdated={refetch}
+          />
+        </>
       )}
     </div>
   )

@@ -10,6 +10,7 @@ interface AuthState {
   login: (user: User, token: string) => void
   logout: () => void
   hydrate: () => Promise<void>
+  setUser: (user: User) => void
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -27,6 +28,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     localStorage.removeItem("auth_token")
     set({ user: null, token: null, isAuthenticated: false })
   },
+
+  setUser: (user) => set({ user }),
 
   hydrate: async () => {
     const { token, user } = get()

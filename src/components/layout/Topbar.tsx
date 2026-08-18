@@ -1,4 +1,3 @@
-import { Bell } from "lucide-react"
 import { useNavigate, Link } from "react-router-dom"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import {
@@ -11,6 +10,7 @@ import {
 import { useAuthStore } from "@/stores/authStore"
 import { fullName, initials, roleLabel } from "@/lib/userDisplay"
 import { LogoMark } from "./Logo"
+import { ThemeToggle } from "./ThemeToggle"
 
 interface TopbarProps {
   /** Breadcrumb or page title content, rendered on the left, after the logo. */
@@ -22,7 +22,7 @@ export function Topbar({ children }: TopbarProps) {
   const { user, logout } = useAuthStore()
 
   return (
-    <header className="flex h-16 w-full shrink-0 items-center justify-between border-b border-topbar-border bg-topbar px-6 text-topbar-foreground">
+    <header className="flex h-14 w-full shrink-0 items-center justify-between border-b border-topbar-border bg-topbar px-6 text-topbar-foreground">
       <div className="flex items-center gap-4">
         <Link to="/projects" className="flex items-center gap-2">
           <LogoMark />
@@ -41,9 +41,7 @@ export function Topbar({ children }: TopbarProps) {
       </div>
 
       <div className="flex items-center gap-4">
-        <button className="relative flex size-9 items-center justify-center rounded-full text-topbar-muted transition-colors hover:bg-topbar-accent hover:text-topbar-foreground">
-          <Bell className="size-[18px]" />
-        </button>
+        <ThemeToggle />
 
         <div className="h-8 w-px bg-topbar-border" />
 
@@ -57,8 +55,8 @@ export function Topbar({ children }: TopbarProps) {
                 {user ? roleLabel(user.role) : ""}
               </p>
             </div>
-            <Avatar className="size-9">
-              <AvatarFallback className="bg-brand text-sm font-medium text-brand-foreground">
+            <Avatar className="size-8">
+              <AvatarFallback className="bg-brand text-xs font-medium text-brand-foreground">
                 {user ? initials(user) : "U"}
               </AvatarFallback>
             </Avatar>

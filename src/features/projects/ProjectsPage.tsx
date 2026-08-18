@@ -15,6 +15,7 @@ import { ProjectCard } from "@/components/shared/ProjectCard"
 import { FolderCard } from "./FolderCard"
 import { CreateFolderDialog } from "./CreateFolderDialog"
 import { CreateProjectDialog } from "./CreateProjectDialog"
+import { InviteMemberDialog } from "@/features/workspace/InviteMemberDialog"
 import { listProjects, listFolders } from "@/lib/projectApi"
 import { getWorkspace, listWorkspaceMembers } from "@/lib/workspaceApi"
 import { useWorkspaceStore } from "@/stores/workspaceStore"
@@ -34,6 +35,7 @@ export function ProjectsPage() {
   const [search, setSearch] = useState("")
   const [folderDialogOpen, setFolderDialogOpen] = useState(false)
   const [projectDialogOpen, setProjectDialogOpen] = useState(false)
+  const [inviteDialogOpen, setInviteDialogOpen] = useState(false)
   const [sortOrder, setSortOrder] = useState<SortOrder>("newest")
 
   const sortedProjects = useMemo(() => {
@@ -103,11 +105,9 @@ export function ProjectsPage() {
               </Avatar>
             ))}
           </div>
-          <Button variant="outline" asChild>
-            <Link to={`/settings/workspaces/${workspaceId}/members`}>
-              <UserPlus className="size-4" />
-              Invite Team
-            </Link>
+          <Button variant="outline" onClick={() => setInviteDialogOpen(true)}>
+            <UserPlus className="size-4" />
+            Invite Team
           </Button>
         </div>
       </div>
@@ -152,7 +152,7 @@ export function ProjectsPage() {
       ) : (
         <>
           {folders.length > 0 && (
-            <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
               {folders.map((folder) => (
                 <FolderCard key={folder.id} folder={folder} />
               ))}
@@ -167,9 +167,9 @@ export function ProjectsPage() {
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
               {sortedProjects.map((project) => (
-                <ProjectCard key={project.id} project={project} />
+                <ProjectCard key={project.id} project={project} workspaceId={workspaceId} onChanged={refetch} />
               ))}
             </div>
           )}
@@ -187,6 +187,12 @@ export function ProjectsPage() {
         open={projectDialogOpen}
         onOpenChange={setProjectDialogOpen}
         onCreated={refetch}
+      />
+      <InviteMemberDialog
+        workspaceId={workspaceId}
+        open={inviteDialogOpen}
+        onOpenChange={setInviteDialogOpen}
+        onInvited={refetch}
       />
     </div>
   )

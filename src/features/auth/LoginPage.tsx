@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { login as loginRequest } from "@/lib/authApi"
 import { useAuthStore } from "@/stores/authStore"
-import LoginAnimation from "@/components/layout/LoginAnimation"
+import DetectionCanvas from "@/components/layout/DetectionCanvas"
 
 export function LoginPage() {
   const navigate = useNavigate()
@@ -47,31 +47,31 @@ export function LoginPage() {
 
       {/* LEFT SIDE */}
       <div className="hidden lg:block">
-        <LoginAnimation />
+        <DetectionCanvas />
       </div>
 
       {/* RIGHT SIDE */}
-      <div className="flex items-center justify-center border-l border-white/5 bg-[#111118] px-10">
+      <div className="flex items-center justify-center border-l border-white/5 bg-[#111118] px-8">
 
-        <div className="w-full max-w-[430px]">
+        <div className="w-full max-w-[360px]">
 
-          <LogoMark className="mb-8 h-11 w-11" />
+          <LogoMark className="mx-auto mb-6 h-9 w-9" />
 
-          <h1 className="text-3xl font-bold text-white">
+          <h1 className="text-center text-2xl font-bold text-white">
             Welcome back
           </h1>
 
-          <p className="mt-2 mb-8 text-sm text-zinc-400">
+          <p className="mt-1.5 mb-6 text-center text-xs text-zinc-400">
             Sign in to continue to your workspace.
           </p>
 
           <form
             onSubmit={handleSubmit}
-            className="space-y-5"
+            className="space-y-3.5"
           >
 
-            <div className="space-y-2">
-              <Label className="text-zinc-300">
+            <div className="space-y-1.5">
+              <Label className="text-xs text-zinc-300">
                 Email
               </Label>
 
@@ -81,7 +81,8 @@ export function LoginPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="
-                  h-11
+                  h-9
+                  text-sm
                   bg-[#17171F]
                   border-white/10
                   text-white
@@ -91,8 +92,8 @@ export function LoginPage() {
               />
             </div>
 
-            <div className="space-y-2">
-              <Label className="text-zinc-300">
+            <div className="space-y-1.5">
+              <Label className="text-xs text-zinc-300">
                 Password
               </Label>
 
@@ -102,7 +103,8 @@ export function LoginPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="
-                  h-11
+                  h-9
+                  text-sm
                   bg-[#17171F]
                   border-white/10
                   text-white
@@ -113,7 +115,7 @@ export function LoginPage() {
             </div>
 
             {error && (
-              <p className="text-sm text-red-400">
+              <p className="text-xs text-red-400">
                 {error}
               </p>
             )}
@@ -122,7 +124,8 @@ export function LoginPage() {
               type="submit"
               disabled={isLoading}
               className="
-                h-11
+                h-9
+                text-sm
                 w-full
                 bg-violet-600
                 hover:bg-violet-500
@@ -134,13 +137,13 @@ export function LoginPage() {
 
           </form>
 
-          <div className="relative my-8">
+          <div className="relative my-5">
             <div className="absolute inset-0 flex items-center">
               <div className="w-full border-t border-white/10" />
             </div>
 
             <div className="relative flex justify-center">
-              <span className="bg-[#111118] px-4 text-xs text-zinc-500">
+              <span className="bg-[#111118] px-3 text-[11px] text-zinc-500">
                 OR
               </span>
             </div>
@@ -149,7 +152,8 @@ export function LoginPage() {
           <Button
             variant="outline"
             className="
-              h-11
+              h-9
+              text-sm
               w-full
               border-white/10
               bg-transparent
@@ -160,7 +164,7 @@ export function LoginPage() {
             Continue with Google
           </Button>
 
-          <p className="mt-8 text-center text-sm text-zinc-400">
+          <p className="mt-6 text-center text-xs text-zinc-400">
             Don't have an account?{" "}
             <Link
               to="/register"

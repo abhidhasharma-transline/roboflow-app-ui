@@ -56,6 +56,7 @@ export interface BatchPreviewImage {
   is_duplicate: boolean
   width: number
   height: number
+  tags: { id: string; name: string }[]
 }
 
 export interface BatchPreviewResponse {

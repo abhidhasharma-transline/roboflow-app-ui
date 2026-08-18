@@ -42,6 +42,17 @@ export async function deleteProject(workspaceId: string, projectId: string): Pro
   return res.data
 }
 
+export async function moveProject(
+  workspaceId: string,
+  projectId: string,
+  folderId: string | null
+): Promise<Project> {
+  const res = await api.patch<Project>(`${base(workspaceId)}/projects/${projectId}/folder`, {
+    folder_id: folderId,
+  })
+  return res.data
+}
+
 export async function createProject(
   workspaceId: string,
   payload: {
@@ -60,10 +71,12 @@ export async function createProject(
 
 export async function listProjectMembers(
   workspaceId: string,
-  projectId: string
+  projectId: string,
+  role?: string
 ): Promise<ProjectMember[]> {
   const res = await api.get<ProjectMember[]>(
-    `${base(workspaceId)}/projects/${projectId}/members`
+    `${base(workspaceId)}/projects/${projectId}/members`,
+    { params: role ? { role } : undefined }
   )
   return res.data
 }
@@ -72,11 +85,26 @@ export async function addProjectMember(
   workspaceId: string,
   projectId: string,
   userId: string,
-  role: ProjectMember["role"]
+  role: ProjectMember["role"],
+  permissions?: Record<string, boolean> | null
 ): Promise<{ message: string }> {
   const res = await api.post<{ message: string }>(
     `${base(workspaceId)}/projects/${projectId}/members`,
-    { user_id: userId, role }
+    { user_id: userId, role, permissions }
+  )
+  return res.data
+}
+
+/** Project-scoped role/permission override for one member — independent of their workspace-level settings. */
+export async function updateProjectMember(
+  workspaceId: string,
+  projectId: string,
+  userId: string,
+  payload: { role?: ProjectMember["role"]; permissions?: Record<string, boolean> | null }
+): Promise<{ message: string }> {
+  const res = await api.patch<{ message: string }>(
+    `${base(workspaceId)}/projects/${projectId}/members/${userId}`,
+    payload
   )
   return res.data
 }

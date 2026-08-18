@@ -11,6 +11,9 @@ import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { TagInput } from "@/components/shared/TagInput"
 import { inviteWorkspaceMember } from "@/lib/workspaceApi"
+import { MemberAccessFields } from "./MemberAccessFields"
+import { effectivePermissions, type PermissionKey } from "@/lib/permissions"
+import type { WorkspaceRole } from "@/types/auth"
 
 interface InviteMemberDialogProps {
   workspaceId: string
@@ -26,14 +29,30 @@ export function InviteMemberDialog({
   onInvited,
 }: InviteMemberDialogProps) {
   const [emails, setEmails] = useState<string[]>([])
+  const [role, setRole] = useState<WorkspaceRole>("labeler")
+  const [permissions, setPermissions] = useState<Record<PermissionKey, boolean>>(
+    effectivePermissions("labeler", null)
+  )
+  const [fullAccess, setFullAccess] = useState(true)
+  const [projectIds, setProjectIds] = useState<string[]>([])
+
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [successfulInvites, setSuccessfulInvites] = useState<string[]>([])
   const [inviteErrors, setInviteErrors] = useState<{ email: string; error: string }[]>([])
 
   function reset() {
     setEmails([])
+    setRole("labeler")
+    setPermissions(effectivePermissions("labeler", null))
+    setFullAccess(true)
+    setProjectIds([])
     setSuccessfulInvites([])
     setInviteErrors([])
+  }
+
+  function handleRoleChange(newRole: WorkspaceRole) {
+    setRole(newRole)
+    setPermissions(effectivePermissions(newRole, null))
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -47,10 +66,15 @@ export function InviteMemberDialog({
     try {
       const success: string[] = []
       const failures: { email: string; error: string }[] = []
+      const access = {
+        role,
+        permissions,
+        project_ids: fullAccess ? null : projectIds,
+      }
 
       for (const email of emails) {
         try {
-          await inviteWorkspaceMember(workspaceId, email)
+          await inviteWorkspaceMember(workspaceId, email, access)
           success.push(email)
         } catch (err) {
           failures.push({ email, error: extractErrorMessage(err) })
@@ -81,11 +105,12 @@ export function InviteMemberDialog({
         }
       }}
     >
-      <DialogContent>
+      <DialogContent className="max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Invite members</DialogTitle>
           <DialogDescription>
-            Enter one or more email addresses to send workspace invitations.
+            Enter one or more email addresses and choose the role/access they'll get.
+            Everyone you invite here gets the same settings.
           </DialogDescription>
         </DialogHeader>
 
@@ -98,6 +123,18 @@ export function InviteMemberDialog({
               placeholder="Type an email and press Enter..."
             />
           </div>
+
+          <MemberAccessFields
+            workspaceId={workspaceId}
+            role={role}
+            onRoleChange={handleRoleChange}
+            permissions={permissions}
+            onPermissionsChange={setPermissions}
+            fullAccess={fullAccess}
+            onFullAccessChange={setFullAccess}
+            projectIds={projectIds}
+            onProjectIdsChange={setProjectIds}
+          />
 
           {successfulInvites.length > 0 && (
             <div className="rounded-md border border-green-300 bg-green-50 p-3 text-sm text-green-700">

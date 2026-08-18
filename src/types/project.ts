@@ -18,6 +18,7 @@ export interface Project {
   folder_id: string | null
   is_active: boolean
   created_at: string
+  thumbnail_url: string | null
 }
 
 export interface ProjectFolder {
@@ -33,4 +34,9 @@ export interface ProjectMember {
   id: string
   user_id: string
   role: "admin" | "labeler" | "reviewer" | "super_admin"
+  permission_overrides: Record<string, boolean> | null
+  email: string
+  username: string
+  first_name?: string
+  last_name?: string
 }

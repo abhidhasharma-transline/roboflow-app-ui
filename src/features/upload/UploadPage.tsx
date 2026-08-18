@@ -1,23 +1,34 @@
 import { useEffect, useRef, useState } from "react"
-import { useParams } from "react-router-dom"
+import { useParams, useNavigate } from "react-router-dom"
 import {
   Upload,
   Image as ImageIcon,
   BoxSelect,
   Video,
   FileText,
-  CheckCircle2,
   AlertTriangle,
   X,
+  ArrowLeft,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Progress } from "@/components/ui/progress"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog"
 import { TagInput } from "@/components/shared/TagInput"
 import { VideoExtractor } from "./VideoExtractor"
-import { uploadImages } from "@/lib/uploadApi"
+import { BatchReview } from "./BatchReview"
+import { uploadImages, discardBatch } from "@/lib/uploadApi"
 import { useWorkspaceStore } from "@/stores/workspaceStore"
+import { useUnsavedUploadStore } from "@/stores/unsavedUploadStore"
+import { useUnsavedUploadGuard } from "@/hooks/useUnsavedUploadGuard"
 import type { UploadImagesResponse } from "@/types/upload"
 
 const VIDEO_EXTENSIONS = /\.(mp4|mov)$/i
@@ -40,15 +51,9 @@ type Stage =
   | { kind: "selected"; files: File[]; folderName?: string }
   | { kind: "committing"; percent: number; label: string }
   | { kind: "video-modal"; file: File }
-  | { kind: "saved"; imageCount: number }
+  | { kind: "review"; batchId: string }
   | { kind: "error"; message: string }
 
-/** One local thumbnail. Owns its own blob URL and revokes it on unmount/file-change.
- *  Creation and revocation deliberately live in the same effect — see the
- *  detailed comment on the analogous pattern in VideoExtractor.tsx. Splitting
- *  creation into useMemo and cleanup into a separate useEffect lets React
- *  StrictMode's dev-mode mount→cleanup→mount revoke the URL currently being
- *  displayed before the <img> ever loads it. */
 function LocalThumb({ file, onRemove }: { file: File; onRemove: () => void }) {
   const [url, setUrl] = useState<string | null>(null)
   useEffect(() => {
@@ -65,7 +70,6 @@ function LocalThumb({ file, onRemove }: { file: File; onRemove: () => void }) {
         className="absolute top-1.5 right-1.5 rounded-full bg-black/60 p-1 text-white opacity-0 transition-opacity group-hover:opacity-100"
       >
         <X className="size-3" />
-
       </button>
     </div>
   )
@@ -73,13 +77,18 @@ function LocalThumb({ file, onRemove }: { file: File; onRemove: () => void }) {
 
 export function UploadPage() {
   const { projectId } = useParams()
+  const navigate = useNavigate()
   const workspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
+  const { pendingBatch, setPendingBatch, clearPendingBatch } = useUnsavedUploadStore()
+  useUnsavedUploadGuard()
 
   const [batchName, setBatchName] = useState(defaultBatchName)
   const [tags, setTags] = useState<string[]>([])
   const [isDragging, setIsDragging] = useState(false)
   const [stage, setStage] = useState<Stage>({ kind: "idle" })
   const [rowErrors, setRowErrors] = useState<UploadImagesResponse["errors"]>([])
+  const [discardOpen, setDiscardOpen] = useState(false)
+  const [discarding, setDiscarding] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const folderInputRef = useRef<HTMLInputElement>(null)
@@ -90,17 +99,18 @@ export function UploadPage() {
       return
     }
     setRowErrors([])
-    setStage({ kind: "committing", percent: 0, label: `Uploading ${files.length} image(s)…` })
+    setStage({ kind: "committing", percent: 0, label: "Processing files…" })
     try {
       const res = await uploadImages(
         workspaceId,
         projectId,
         files,
         { batchName, tagNames: tags, folderName },
-        (percent) => setStage({ kind: "committing", percent, label: `Uploading ${files.length} image(s)…` })
+        (percent) => setStage({ kind: "committing", percent, label: "Processing files…" })
       )
       setRowErrors(res.errors)
-      setStage({ kind: "saved", imageCount: res.saved })
+      setPendingBatch({ workspaceId, projectId, batchId: res.batch_id })
+      setStage({ kind: "review", batchId: res.batch_id })
     } catch (err) {
       setStage({ kind: "error", message: extractErrorMessage(err) })
     }
@@ -117,9 +127,6 @@ export function UploadPage() {
     }
 
     if (imageFiles.length === 0) return
-
-    // Always hold files locally for review first — nothing touches MinIO/DB
-    // until the user explicitly clicks "Save and Continue".
     setStage({ kind: "selected", files: imageFiles, folderName })
   }
 
@@ -137,45 +144,73 @@ export function UploadPage() {
     if (folderInputRef.current) folderInputRef.current.value = ""
   }
 
+  function handleSaved(batchId: string) {
+    clearPendingBatch()
+    navigate(`/projects/${projectId}/annotate/batch/${batchId}`)
+  }
+
+  async function handleDiscard() {
+    if (!pendingBatch) return
+    setDiscarding(true)
+    try {
+      await discardBatch(pendingBatch.workspaceId, pendingBatch.projectId, pendingBatch.batchId)
+    } catch {
+      // Best-effort — even if this fails, don't block the person from leaving.
+    }
+    clearPendingBatch()
+    setDiscardOpen(false)
+    setDiscarding(false)
+    navigate("/projects")
+  }
+
   const isBusy = stage.kind === "committing" || stage.kind === "video-modal"
 
   return (
     <div className="flex-1 overflow-y-auto p-8">
-      <h1 className="mb-6 flex items-center gap-2.5 text-2xl font-semibold text-foreground">
-        <Upload className="size-6" />
-        Upload Data
-      </h1>
+      <div className="mb-6 flex items-center justify-between">
+        <h1 className="flex items-center gap-2.5 text-2xl font-semibold text-foreground">
+          <Upload className="size-6" />
+          Upload Data
+        </h1>
+        {pendingBatch && (
+          <button
+            onClick={() => setDiscardOpen(true)}
+            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+          >
+            <ArrowLeft className="size-3.5" />
+            Discard and back to Projects
+          </button>
+        )}
+      </div>
 
-      <div className="mx-auto max-w-3xl">
+      <div className="mx-auto max-w-4xl">
         <div>
-          <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div className="flex flex-col gap-1.5">
-              <Label className="text-sm font-medium text-foreground">Batch Name:</Label>
-              <Input
-                value={batchName}
-                onChange={(e) => setBatchName(e.target.value)}
-                disabled={isBusy}
-              />
+          {stage.kind !== "review" && (
+            <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-sm font-medium text-foreground">Batch Name:</Label>
+                <Input
+                  value={batchName}
+                  onChange={(e) => setBatchName(e.target.value)}
+                  disabled={isBusy}
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-sm font-medium text-foreground">Tags:</Label>
+                <TagInput value={tags} onChange={setTags} />
+              </div>
             </div>
-            <div className="flex flex-col gap-1.5">
-              <Label className="text-sm font-medium text-foreground">Tags:</Label>
-              <TagInput value={tags} onChange={setTags} />
-            </div>
-          </div>
+          )}
 
-          {stage.kind === "saved" ? (
-            <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-12 text-center">
-              <CheckCircle2 className="size-10 text-emerald-600" />
-              <p className="text-lg font-semibold text-foreground">
-                Batch saved — {stage.imageCount} image{stage.imageCount !== 1 && "s"}
-              </p>
-              <p className="text-sm text-muted-foreground">
-                It's in Unassigned, ready to annotate.
-              </p>
-              <Button variant="outline" onClick={resetToIdle}>
-                Upload more
-              </Button>
-            </div>
+          {stage.kind === "review" && workspaceId && projectId ? (
+            <BatchReview
+              workspaceId={workspaceId}
+              projectId={projectId}
+              batchId={stage.batchId}
+              batchName={batchName}
+              tags={tags}
+              onSaved={() => handleSaved(stage.batchId)}
+            />
           ) : stage.kind === "selected" ? (
             <div>
               <div className="mb-4 flex items-center justify-between">
@@ -226,7 +261,7 @@ export function UploadPage() {
             >
               {stage.kind === "committing" ? (
                 <div className="flex w-full max-w-sm flex-col items-center gap-3 py-6">
-                  <p className="text-sm font-medium text-foreground">{stage.label}</p>
+                  <p className="text-lg font-semibold text-brand">{stage.label}</p>
                   <Progress value={stage.percent} className="w-full" />
                 </div>
               ) : (
@@ -336,10 +371,33 @@ export function UploadPage() {
           file={stage.file}
           batchName={batchName}
           tagNames={tags}
-          onExtractionComplete={() => setStage({ kind: "saved", imageCount: 0 })}
+          onExtractionComplete={(batchId) => {
+            setPendingBatch({ workspaceId, projectId, batchId })
+            setStage({ kind: "review", batchId })
+          }}
           onSkip={() => setStage({ kind: "idle" })}
         />
       )}
+
+      <Dialog open={discardOpen} onOpenChange={discarding ? undefined : setDiscardOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Discard this batch?</DialogTitle>
+            <DialogDescription>
+              You haven't clicked "Save and Continue" yet. Leaving now deletes everything
+              uploaded so far in this batch — nothing will be kept.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDiscardOpen(false)} disabled={discarding}>
+              Keep editing
+            </Button>
+            <Button variant="destructive" onClick={handleDiscard} disabled={discarding}>
+              {discarding ? "Discarding…" : "Discard and leave"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
