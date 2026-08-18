@@ -59,3 +59,35 @@ export async function getImageHistory(
   )
   return res.data
 }
+
+export async function removeImageFromProject(
+  workspaceId: string,
+  projectId: string,
+  imageId: string
+): Promise<void> {
+  await api.delete(`/workspaces/${workspaceId}/projects/${projectId}/images/${imageId}`)
+}
+
+export async function setAsCoverPhoto(
+  workspaceId: string,
+  projectId: string,
+  imageId: string
+): Promise<void> {
+  await api.post(`/workspaces/${workspaceId}/projects/${projectId}/images/${imageId}/set-as-cover`)
+}
+
+export async function addImageToDataset(
+  workspaceId: string,
+  projectId: string,
+  imageId: string
+): Promise<void> {
+  await api.post(`/workspaces/${workspaceId}/projects/${projectId}/images/${imageId}/add-to-dataset`)
+}
+
+export async function sendImageToUnannotated(
+  workspaceId: string,
+  projectId: string,
+  imageId: string
+): Promise<void> {
+  await api.post(`/workspaces/${workspaceId}/projects/${projectId}/images/${imageId}/send-to-unannotated`)
+}

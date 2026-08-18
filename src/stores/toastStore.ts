@@ -5,6 +5,10 @@ export interface ToastItem {
   title: string
   description?: string
   variant: "success" | "error"
+  /** Optional inline action button (e.g. "Download") — rendered instead of
+   *  auto-dismiss-only when present. Clicking it also dismisses the toast. */
+  actionLabel?: string
+  onAction?: () => void
 }
 
 interface ToastState {
@@ -13,7 +17,8 @@ interface ToastState {
   removeToast: (id: string) => void
 }
 
-const TOAST_DURATION_MS = 4000
+const TOAST_DURATION_MS = 6000
+const TOAST_WITH_ACTION_DURATION_MS = 10000
 
 export const useToastStore = create<ToastState>((set) => ({
   toasts: [],
@@ -22,7 +27,7 @@ export const useToastStore = create<ToastState>((set) => ({
     set((state) => ({ toasts: [...state.toasts, { ...toast, id }] }))
     setTimeout(() => {
       set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) }))
-    }, TOAST_DURATION_MS)
+    }, toast.actionLabel ? TOAST_WITH_ACTION_DURATION_MS : TOAST_DURATION_MS)
   },
   removeToast: (id) => set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) })),
 }))

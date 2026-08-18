@@ -9,6 +9,7 @@ export interface AnnotationRecord {
   class_color: string
   shape_type: "bbox" | "polygon"
   geometry: Record<string, unknown>
+  z_index: number
   created_by: string
   created_at: string
 }
@@ -26,6 +27,7 @@ export function toStoreAnnotation(record: AnnotationRecord): Annotation {
       record.shape_type === "polygon"
         ? ((record.geometry as { points: unknown }).points as Annotation["polygon"])
         : undefined,
+    zIndex: record.z_index,
     createdBy: record.created_by,
     createdAt: record.created_at,
   }
@@ -63,11 +65,11 @@ export async function updateAnnotation(
   projectId: string,
   imageId: string,
   annotationId: string,
-  payload: { classId?: string; geometry?: Record<string, unknown> }
+  payload: { classId?: string; geometry?: Record<string, unknown>; zIndex?: number }
 ): Promise<AnnotationRecord> {
   const res = await api.patch<AnnotationRecord>(
     `${base(workspaceId, projectId, imageId)}/${annotationId}`,
-    { class_id: payload.classId, geometry: payload.geometry }
+    { class_id: payload.classId, geometry: payload.geometry, z_index: payload.zIndex }
   )
   return res.data
 }

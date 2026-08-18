@@ -111,10 +111,11 @@ export async function getJobImages(
 export async function listJobs(
   workspaceId: string,
   projectId: string,
-  status?: "active" | "completed" | "cancelled"
+  status?: "active" | "completed" | "cancelled",
+  stage?: "annotating" | "dataset"
 ): Promise<JobSummary[]> {
   const res = await api.get<JobSummary[]>(jobsBase(workspaceId, projectId), {
-    params: status ? { status } : undefined,
+    params: { status, stage },
   })
   return res.data
 }
@@ -196,6 +197,18 @@ export async function moveJobToUnassigned(
   jobId: string
 ): Promise<{ moved_images: number }> {
   const res = await api.post(`${jobsBase(workspaceId, projectId)}/${jobId}/move-to-unassigned`)
+  return res.data
+}
+
+export type DatasetSplitMethod = "existing" | "split" | "all_train" | "all_valid" | "all_test"
+
+export async function addJobImagesToDataset(
+  workspaceId: string,
+  projectId: string,
+  jobId: string,
+  method: DatasetSplitMethod = "existing"
+): Promise<{ job_id: string; images_added: number }> {
+  const res = await api.post(`${jobsBase(workspaceId, projectId)}/${jobId}/add-to-dataset`, { method })
   return res.data
 }
 

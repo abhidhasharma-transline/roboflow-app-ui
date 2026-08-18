@@ -33,6 +33,20 @@ import {
   Folder,
   RotateCcw,
   History as HistoryIcon,
+  BringToFront,
+  SendToBack,
+  Layers2,
+  LayersMinus,
+  WandSparkles,
+  VenetianMask,
+  Repeat,
+  Check,
+  Search,
+  Download,
+  Star,
+  FolderMinus,
+  RefreshCcw,
+  ScanSearch,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -42,6 +56,7 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu"
 import { Switch } from "@/components/ui/switch"
 import { Slider } from "@/components/ui/slider"
@@ -54,7 +69,7 @@ import { useToastStore } from "@/stores/toastStore"
 import { useProject } from "@/hooks/useProjects"
 import { useAnnotationSocket, type LockInfo } from "@/hooks/useAnnotationSocket"
 import { getJobImages, moveJobToUnassigned, deleteJobAnnotations } from "@/lib/jobApi"
-import { listClasses, createClass, type ProjectClass } from "@/lib/classApi"
+import { listClasses, quickCreateClass, type ProjectClass } from "@/lib/classApi"
 import { listAnnotations, createAnnotation, updateAnnotation, deleteAnnotation, toStoreAnnotation } from "@/lib/annotationApi"
 import {
   listImageTags, addImageTag, removeImageTag, addImageMetadata, removeImageMetadata,
@@ -63,6 +78,7 @@ import {
 import { getImage, type ImageDetail } from "@/lib/imageApi"
 import {
   listComments, createComment, deleteComment, getImageHistory,
+  removeImageFromProject, setAsCoverPhoto, addImageToDataset, sendImageToUnannotated,
   type ImageComment, type ImageHistoryEntry,
 } from "@/lib/commentApi"
 import type { JobImageSummary } from "@/types/job"
@@ -90,9 +106,46 @@ const NEW_CLASS_COLORS = [
 ]
 
 const tools: { key: AnnotationTool; icon: typeof MousePointer2; label: string }[] = [
-  { key: "select", icon: MousePointer2, label: "Select (V)" },
+  { key: "select", icon: MousePointer2, label: "Select (D)" },
   { key: "bbox", icon: Square, label: "Bounding box (B)" },
   { key: "polygon", icon: Spline, label: "Polygon (P)" },
+]
+
+// Documents the shortcuts actually wired up below — kept in sync by hand,
+// since a mismatch here is worse than not having the dialog at all.
+const SHORTCUT_GROUPS: { title: string; items: { keys: string[]; label: string; hint?: string }[] }[] = [
+  {
+    title: "General Shortcuts",
+    items: [
+      { keys: ["B"], label: "Bounding Box tool" },
+      { keys: ["P"], label: "Polygon tool" },
+      { keys: ["D"], label: "Select tool" },
+      { keys: ["Space", "drag"], label: "Pan the image" },
+      { keys: ["+"], label: "Zoom in" },
+      { keys: ["–"], label: "Zoom out" },
+      { keys: ["0"], label: "Reset zoom" },
+      { keys: ["←"], label: "Previous image" },
+      { keys: ["→"], label: "Next image" },
+      { keys: ["R"], label: "Repeat Previous", hint: "Copies every annotation from the last image onto this one." },
+      { keys: ["Shift", "A"], label: "Add Image to Dataset / Send to Unannotated", hint: "Toggles once the image has at least one annotation." },
+      { keys: ["Esc"], label: "Exit the annotation editor / cancel the shape you're drawing" },
+      { keys: ["Ctrl", "Z"], label: "Undo" },
+      { keys: ["Ctrl", "Y"], label: "Redo" },
+    ],
+  },
+  {
+    title: "With Annotation Selected",
+    items: [
+      { keys: ["Enter"], label: "Save changes to selection and label" },
+      { keys: ["Esc"], label: "Cancel changes and deselect" },
+      { keys: ["↑"], label: "Previous class" },
+      { keys: ["↓"], label: "Next class" },
+      { keys: ["1", "–", "9"], label: "Jump straight to the Nth class in the list" },
+      { keys: ["Backspace", "Delete"], label: "Delete selection" },
+      { keys: ["Ctrl", "C"], label: "Copy selected annotation" },
+      { keys: ["Ctrl", "V"], label: "Paste copied annotation onto the current image" },
+    ],
+  },
 ]
 
 const leftNavItems = [
@@ -208,6 +261,10 @@ export function AnnotationToolPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [movingToUnassigned, setMovingToUnassigned] = useState(false)
   const [deletingAllAnnotations, setDeletingAllAnnotations] = useState(false)
+  const [downloadingImage, setDownloadingImage] = useState(false)
+  const [settingCover, setSettingCover] = useState(false)
+  const [removingFromProject, setRemovingFromProject] = useState(false)
+  const [togglingDatasetStatus, setTogglingDatasetStatus] = useState(false)
 
   const [activeLeftNav, setActiveLeftNav] = useState<"labels" | "attributes" | "comments" | "history" | "raw">("labels")
   const [imageDetail, setImageDetail] = useState<ImageDetail | null>(null)
@@ -251,6 +308,9 @@ export function AnnotationToolPage() {
   const [drawCurrent, setDrawCurrent] = useState<{ x: number; y: number } | null>(null)
   const drawTempIdRef = useRef<string | null>(null)
   const lastPreviewSentRef = useRef(0)
+  const clipboardRef = useRef<{ classId: string; shapeType: "bbox" | "polygon"; geometry: Record<string, unknown> } | null>(null)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [shortcutSearch, setShortcutSearch] = useState("")
 
   const [polygonPoints, setPolygonPoints] = useState<Point[]>([])
   const [polygonHoverPos, setPolygonHoverPos] = useState<Point | null>(null)
@@ -273,6 +333,7 @@ export function AnnotationToolPage() {
   // down to just that one class and hide every other option).
   const [pendingSelectedClassId, setPendingSelectedClassId] = useState<string | null>(null)
   const [savingPending, setSavingPending] = useState(false)
+  const [repeatingPrevious, setRepeatingPrevious] = useState(false)
 
   const [contextMenu, setContextMenu] = useState<{ annotationId: string; x: number; y: number } | null>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
@@ -311,6 +372,7 @@ export function AnnotationToolPage() {
   }
 
   const currentImage = images[currentIndex]
+  const isInDataset = currentImage?.status === "dataset"
 
   const { remoteDrafts, locks, sendDragPreview, acquireLock, releaseLock } = useAnnotationSocket(
     workspaceId ?? undefined,
@@ -443,8 +505,12 @@ export function AnnotationToolPage() {
     await deleteComment(workspaceId, projectId, currentImage.id, commentId)
   }
 
-  function copyJson(value: unknown) {
+  const [copiedKey, setCopiedKey] = useState<"source" | "annotation" | null>(null)
+
+  function copyJson(value: unknown, key: "source" | "annotation") {
     navigator.clipboard.writeText(JSON.stringify(value, null, 4))
+    setCopiedKey(key)
+    setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 1500)
   }
 
   // Switching images or tools mid-polygon-draw abandons the in-progress shape
@@ -495,6 +561,9 @@ export function AnnotationToolPage() {
         setPendingComment(null)
         setCommentDraft("")
       }
+      if (e.key === "Escape" && shortcutsOpen) {
+        setShortcutsOpen(false)
+      }
       if (
         (pendingShape || editingAnnotationId) &&
         e.key >= "1" &&
@@ -513,13 +582,13 @@ export function AnnotationToolPage() {
     }
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
-  }, [polygonPoints.length, pendingShape, editingAnnotationId, classes, pendingClassName, pendingComment])
+  }, [polygonPoints.length, pendingShape, editingAnnotationId, classes, pendingClassName, pendingComment, shortcutsOpen])
 
   // Standard Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) undo/redo shortcuts, matching
   // the toolbar buttons — most people reach for these before the icons.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if (!(e.ctrlKey || e.metaKey) || document.activeElement?.tagName === "INPUT") return
+      if (!(e.ctrlKey || e.metaKey) || document.activeElement?.tagName === "INPUT" || shortcutsOpen) return
       if (e.key.toLowerCase() === "z" && !e.shiftKey) {
         e.preventDefault()
         handleUndo()
@@ -530,12 +599,116 @@ export function AnnotationToolPage() {
     }
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
-  }, [undoStack, redoStack, workspaceId, projectId, currentImage])
+  }, [undoStack, redoStack, workspaceId, projectId, currentImage, shortcutsOpen])
+
+  // "R" → Repeat Previous, matching Roboflow's shortcut for copying the
+  // prior image's annotations onto this one.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.ctrlKey || e.metaKey || e.altKey) return
+      if (document.activeElement?.tagName === "INPUT" || shortcutsOpen) return
+      if (e.key.toLowerCase() === "r") {
+        e.preventDefault()
+        handleRepeatPrevious()
+      }
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [repeatingPrevious, currentIndex, images, workspaceId, projectId, currentImage, shortcutsOpen])
+
+  // General shortcuts: tool switching, zoom, image navigation.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.ctrlKey || e.metaKey || e.altKey) return
+      if (document.activeElement?.tagName === "INPUT" || shortcutsOpen) return
+      const key = e.key.toLowerCase()
+      if (key === "b") setActiveTool("bbox")
+      else if (key === "p") setActiveTool("polygon")
+      else if (key === "d") setActiveTool("select")
+      else if (key === "+" || key === "=") setZoom(Math.min(zoom + 0.2, 3))
+      else if (key === "-") setZoom(Math.max(zoom - 0.2, 0.4))
+      else if (key === "0") setZoom(1)
+      else if (e.key === "ArrowLeft" && polygonPoints.length === 0 && !isBrushing) goPrev()
+      else if (e.key === "ArrowRight" && polygonPoints.length === 0 && !isBrushing) goNext()
+      else if (e.shiftKey && key === "a" && isInDataset) handleSendToUnannotated()
+      else if (e.shiftKey && key === "a" && !isInDataset && annotations.length > 0) handleAddImageToDataset()
+      else return
+      e.preventDefault()
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [zoom, polygonPoints.length, isBrushing, shortcutsOpen, isInDataset, annotations, workspaceId, projectId, currentImage])
+
+  // With an annotation selected or being edited: cycle classes, delete, copy/paste.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (document.activeElement?.tagName === "INPUT" || shortcutsOpen) return
+
+      if ((pendingShape || editingAnnotationId) && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+        e.preventDefault()
+        const filtered = classes.filter((c) =>
+          c.name.toLowerCase().includes(pendingClassName.trim().toLowerCase())
+        )
+        if (filtered.length === 0) return
+        const i = filtered.findIndex((c) => c.id === pendingSelectedClassId)
+        const next =
+          e.key === "ArrowUp"
+            ? filtered[i <= 0 ? filtered.length - 1 : i - 1]
+            : filtered[i < 0 || i >= filtered.length - 1 ? 0 : i + 1]
+        setPendingSelectedClassId(next.id)
+        return
+      }
+
+      if (e.key === "Backspace" || e.key === "Delete") {
+        if (pendingShape) {
+          e.preventDefault()
+          handleDiscardPendingShape()
+          return
+        }
+        if (editingAnnotationId) {
+          e.preventDefault()
+          handleDelete(editingAnnotationId)
+          closeAnnotationEditor()
+          return
+        }
+        if (selectedAnnotationId) {
+          e.preventDefault()
+          handleDelete(selectedAnnotationId)
+          setSelectedAnnotationId(null)
+          return
+        }
+      }
+
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c" && selectedAnnotationId) {
+        const ann = annotations.find((a) => a.id === selectedAnnotationId)
+        if (!ann) return
+        e.preventDefault()
+        clipboardRef.current = ann.bbox
+          ? { classId: ann.classId, shapeType: "bbox", geometry: ann.bbox as unknown as Record<string, unknown> }
+          : { classId: ann.classId, shapeType: "polygon", geometry: { points: ann.polygon } }
+        return
+      }
+
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v" && clipboardRef.current) {
+        if (!workspaceId || !projectId || !currentImage) return
+        e.preventDefault()
+        const clip = clipboardRef.current
+        createAnnotation(workspaceId, projectId, currentImage.id, clip).then((created) => {
+          pushHistory({ type: "create", id: created.id, classId: clip.classId, shapeType: clip.shapeType, geometry: clip.geometry })
+        })
+      }
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [
+    pendingShape, editingAnnotationId, classes, pendingClassName, pendingSelectedClassId,
+    selectedAnnotationId, annotations, workspaceId, projectId, currentImage, shortcutsOpen,
+  ])
 
   // Space-held → pan mode (grab cursor + drag-to-scroll), same as Figma/Photoshop.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if (e.code === "Space" && document.activeElement?.tagName !== "INPUT") {
+      if (e.code === "Space" && document.activeElement?.tagName !== "INPUT" && !shortcutsOpen) {
         e.preventDefault()
         setSpaceHeld(true)
       }
@@ -549,7 +722,7 @@ export function AnnotationToolPage() {
       window.removeEventListener("keydown", onKeyDown)
       window.removeEventListener("keyup", onKeyUp)
     }
-  }, [])
+  }, [shortcutsOpen])
 
   useEffect(() => {
     if (!isPanning) return
@@ -817,6 +990,10 @@ export function AnnotationToolPage() {
 
   async function handleDelete(annotationId: string) {
     if (!workspaceId || !projectId || !currentImage) return
+    // Guards against a duplicate delete for the same annotation — e.g. the
+    // Backspace/Delete key auto-repeating while held, or two triggers firing
+    // for one user action — hitting the same already-gone row and 404ing.
+    if (deletingId === annotationId) return
     const ann = annotations.find((a) => a.id === annotationId)
     setDeletingId(annotationId)
     acquireLock(annotationId)
@@ -832,8 +1009,11 @@ export function AnnotationToolPage() {
           geometry: (ann.bbox ?? { points: ann.polygon }) as unknown as Record<string, unknown>,
         })
       }
-    } catch {
-      addToast({ variant: "error", title: "Couldn't delete annotation", description: "Please try again." })
+    } catch (err) {
+      const status = (err as { response?: { status?: number } })?.response?.status
+      if (status !== 404) {
+        addToast({ variant: "error", title: "Couldn't delete annotation", description: "Please try again." })
+      }
     } finally {
       releaseLock(annotationId)
       setDeletingId(null)
@@ -866,6 +1046,116 @@ export function AnnotationToolPage() {
       addToast({ variant: "error", title: "Couldn't delete annotations", description: "Please try again." })
     } finally {
       setDeletingAllAnnotations(false)
+    }
+  }
+
+  async function handleDownloadImage() {
+    if (!currentImage) return
+    setDownloadingImage(true)
+    try {
+      const res = await fetch(currentImage.url)
+      const blob = await res.blob()
+      const objectUrl = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = objectUrl
+      a.download = currentImage.filename
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(objectUrl)
+    } catch {
+      addToast({ variant: "error", title: "Couldn't download image", description: "Please try again." })
+    } finally {
+      setDownloadingImage(false)
+    }
+  }
+
+  async function handleSetAsCoverPhoto() {
+    if (!workspaceId || !projectId || !currentImage) return
+    setSettingCover(true)
+    try {
+      await setAsCoverPhoto(workspaceId, projectId, currentImage.id)
+      addToast({ variant: "success", title: "Cover photo updated", description: currentImage.filename })
+    } catch {
+      addToast({ variant: "error", title: "Couldn't set cover photo", description: "Please try again." })
+    } finally {
+      setSettingCover(false)
+    }
+  }
+
+  async function handleRemoveFromProject() {
+    if (!workspaceId || !projectId || !currentImage || removingFromProject) return
+    setRemovingFromProject(true)
+    try {
+      await removeImageFromProject(workspaceId, projectId, currentImage.id)
+      addToast({ variant: "success", title: "Removed from project", description: currentImage.filename })
+      if (images.length <= 1) {
+        navigate(`/projects/${projectId}/annotate`)
+        return
+      }
+      setImages((prev) => prev.filter((img) => img.id !== currentImage.id))
+      setCurrentIndex((i) => Math.min(i, images.length - 2))
+    } catch (err) {
+      const status = (err as { response?: { status?: number } })?.response?.status
+      if (status !== 404) {
+        addToast({ variant: "error", title: "Couldn't remove image", description: "Please try again." })
+      }
+    } finally {
+      setRemovingFromProject(false)
+    }
+  }
+
+  // Promoting/reverting actually moves this image out of the job whose
+  // pager we're currently in (it's re-homed into a dataset-stage job, or
+  // orphaned from one on revert) — so it must come out of the local `images`
+  // list too, not just have its status flipped in place, or the pager would
+  // keep counting/showing an image that no longer belongs to this job.
+  function dropCurrentImageFromPager() {
+    if (images.length <= 1) {
+      navigate(`/projects/${projectId}/annotate`)
+      return
+    }
+    const removedId = currentImage!.id
+    setImages((prev) => prev.filter((img) => img.id !== removedId))
+    setCurrentIndex((i) => Math.min(i, images.length - 2))
+  }
+
+  async function handleAddImageToDataset() {
+    if (!workspaceId || !projectId || !currentImage || togglingDatasetStatus) return
+    if (annotations.length === 0) return
+    setTogglingDatasetStatus(true)
+    try {
+      await addImageToDataset(workspaceId, projectId, currentImage.id)
+      addToast({ variant: "success", title: "Added to dataset" })
+      dropCurrentImageFromPager()
+    } catch (err) {
+      const status = (err as { response?: { status?: number } })?.response?.status
+      if (status === 404) {
+        dropCurrentImageFromPager()
+      } else {
+        addToast({ variant: "error", title: "Couldn't add to dataset", description: "Please try again." })
+      }
+    } finally {
+      setTogglingDatasetStatus(false)
+    }
+  }
+
+  async function handleSendToUnannotated() {
+    if (!workspaceId || !projectId || !currentImage || togglingDatasetStatus) return
+    setTogglingDatasetStatus(true)
+    try {
+      await sendImageToUnannotated(workspaceId, projectId, currentImage.id)
+      addToast({ variant: "success", title: "Sent to unannotated" })
+      dropCurrentImageFromPager()
+    } catch (err) {
+      const status = (err as { response?: { status?: number } })?.response?.status
+      if (status === 404) {
+        dropCurrentImageFromPager()
+      } else {
+        addToast({ variant: "error", title: "Couldn't send to unannotated", description: "Please try again." })
+      }
+    } finally {
+      setTogglingDatasetStatus(false)
     }
   }
 
@@ -921,7 +1211,8 @@ export function AnnotationToolPage() {
 
   /** Finds an existing class by name (case-insensitive) or creates one —
    * the backend also get-or-creates, this just skips the round-trip when
-   * we already have the answer locally. */
+   * we already have the answer locally. Creating is blocked server-side
+   * when the project has Lock Classes on (Classes & Tags page). */
   async function resolveClassId(name: string): Promise<string | null> {
     if (!workspaceId || !projectId) return null
     const trimmed = name.trim()
@@ -930,12 +1221,26 @@ export function AnnotationToolPage() {
     const existing = classes.find((c) => c.name.toLowerCase() === trimmed.toLowerCase())
     if (existing) return existing.id
 
-    const cls = await createClass(workspaceId, projectId, {
-      name: trimmed,
-      color: NEW_CLASS_COLORS[classes.length % NEW_CLASS_COLORS.length],
-    })
-    setClasses((prev) => (prev.some((c) => c.id === cls.id) ? prev : [...prev, cls]))
-    return cls.id
+    try {
+      const cls = await quickCreateClass(workspaceId, projectId, {
+        name: trimmed,
+        color: NEW_CLASS_COLORS[classes.length % NEW_CLASS_COLORS.length],
+      })
+      setClasses((prev) => (prev.some((c) => c.id === cls.id) ? prev : [...prev, cls]))
+      return cls.id
+    } catch (err) {
+      const status = (err as { response?: { status?: number } })?.response?.status
+      if (status === 400) {
+        addToast({
+          variant: "error",
+          title: "Classes are locked",
+          description: "Pick an existing class — new ones are locked for this project.",
+        })
+      } else {
+        addToast({ variant: "error", title: "Couldn't create class", description: "Please try again." })
+      }
+      return null
+    }
   }
 
   async function handleSavePendingShape(explicitClassId?: string) {
@@ -1041,6 +1346,70 @@ export function AnnotationToolPage() {
       }
     } catch {
       // ignore — no toast system yet
+    }
+  }
+
+  // Stacking order among this image's annotations — higher zIndex renders on
+  // top. Computed from the current in-memory list, committed via the same
+  // PATCH endpoint other edits use; its WS "updated" broadcast lands the
+  // reordered value in the store.
+  async function setZIndex(annotationId: string, zIndex: number) {
+    if (!workspaceId || !projectId || !currentImage) return
+    try {
+      await updateAnnotation(workspaceId, projectId, currentImage.id, annotationId, { zIndex })
+    } catch {
+      // ignore — no toast system yet
+    }
+  }
+
+  function handleBringToFront(annotationId: string) {
+    const top = Math.max(0, ...annotations.map((a) => a.zIndex))
+    setZIndex(annotationId, top + 1)
+  }
+
+  function handleSendToBack(annotationId: string) {
+    const bottom = Math.min(0, ...annotations.map((a) => a.zIndex))
+    setZIndex(annotationId, bottom - 1)
+  }
+
+  function handleBringForward(annotationId: string) {
+    const sorted = [...annotations].sort((a, b) => a.zIndex - b.zIndex)
+    const i = sorted.findIndex((a) => a.id === annotationId)
+    const above = sorted[i + 1]
+    if (i < 0 || !above) return
+    setZIndex(annotationId, above.zIndex + 1)
+  }
+
+  function handleSendBackward(annotationId: string) {
+    const sorted = [...annotations].sort((a, b) => a.zIndex - b.zIndex)
+    const i = sorted.findIndex((a) => a.id === annotationId)
+    const below = sorted[i - 1]
+    if (i <= 0 || !below) return
+    setZIndex(annotationId, below.zIndex - 1)
+  }
+
+  // Copies every annotation from the previous image in this job onto the
+  // current one — useful for video frames where objects barely move between
+  // consecutive frames. Additive: doesn't touch what's already here.
+  async function handleRepeatPrevious() {
+    if (repeatingPrevious || currentIndex === 0 || !workspaceId || !projectId || !currentImage) return
+    const prevImage = images[currentIndex - 1]
+    if (!prevImage) return
+    setRepeatingPrevious(true)
+    try {
+      const prevRows = await listAnnotations(workspaceId, projectId, prevImage.id)
+      for (const row of prevRows) {
+        const created = await createAnnotation(workspaceId, projectId, currentImage.id, {
+          classId: row.class_id,
+          shapeType: row.shape_type,
+          geometry: row.geometry,
+        })
+        pushHistory({ type: "create", id: created.id, classId: row.class_id, shapeType: row.shape_type, geometry: row.geometry })
+      }
+    } catch {
+      // ignore — no toast system yet
+    } finally {
+      setRepeatingPrevious(false)
     }
   }
 
@@ -1167,7 +1536,8 @@ export function AnnotationToolPage() {
       <div className="flex items-center justify-between border-b border-border px-4 py-2">
         <div>
           <button
-            onClick={() => navigate(`/projects/${projectId}/annotate`)}
+            onClick={() => navigate(jobId ? `/projects/${projectId}/annotate/job/${jobId}` : `/projects/${projectId}/annotate`)}
+            title="Back to this job's Unannotated/Annotated view"
             className="flex items-center gap-1.5 text-xs font-semibold tracking-wide text-muted-foreground hover:text-foreground"
           >
             <ArrowLeft className="size-3.5" />
@@ -1193,6 +1563,32 @@ export function AnnotationToolPage() {
           >
             <ChevronRight className="size-4" />
           </Button>
+          <Button
+            variant={isInDataset ? "brand" : "outline"}
+            size="icon"
+            className="rounded-full"
+            onClick={handleSendToUnannotated}
+            disabled={togglingDatasetStatus || !isInDataset}
+            title={isInDataset ? "Send to Unannotated (Shift+A)" : "This image isn't in the dataset yet"}
+          >
+            <RotateCcw className="size-4" />
+          </Button>
+          <Button
+            variant={!isInDataset && annotations.length > 0 ? "outline" : "ghost"}
+            size="icon"
+            className="rounded-full"
+            onClick={handleAddImageToDataset}
+            disabled={togglingDatasetStatus || isInDataset || annotations.length === 0}
+            title={
+              isInDataset
+                ? "Already in the dataset"
+                : annotations.length === 0
+                  ? "Annotate this image first"
+                  : "Add Image to Dataset (Shift+A)"
+            }
+          >
+            <Check className="size-4" />
+          </Button>
         </div>
 
         <div className="flex items-center gap-1">
@@ -1210,7 +1606,45 @@ export function AnnotationToolPage() {
                 <MoreHorizontal className="size-4" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
+            <DropdownMenuContent align="end" className="w-64">
+              <DropdownMenuItem
+                disabled
+                title="Coming soon — needs an AI segmentation model we haven't wired up yet"
+              >
+                <RefreshCcw className="size-3.5" />
+                Convert …
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled
+                title="Coming soon — needs image-similarity search (embeddings) we haven't built yet"
+              >
+                <ScanSearch className="size-3.5" />
+                Find Similar Unassigned Images To Label
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled
+                title="Coming soon — needs image-similarity search (embeddings) we haven't built yet"
+              >
+                <Search className="size-3.5" />
+                Find Similar Images In Dataset
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled={downloadingImage} onClick={handleDownloadImage}>
+                <Download className="size-3.5" />
+                {downloadingImage ? "Downloading…" : "Download Image"}
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled={settingCover} onClick={handleSetAsCoverPhoto}>
+                <Star className="size-3.5" />
+                Use As Cover Photo
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={removingFromProject}
+                onClick={handleRemoveFromProject}
+                className="text-destructive focus:text-destructive"
+              >
+                <FolderMinus className="size-3.5" />
+                Remove From Project
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
               <DropdownMenuItem disabled={movingToUnassigned} onClick={handleMoveToUnassigned}>
                 Move to unassigned
               </DropdownMenuItem>
@@ -1430,12 +1864,19 @@ export function AnnotationToolPage() {
               <p className="mb-1.5 text-xs font-semibold text-muted-foreground">Source Data</p>
               <div className="relative mb-4 rounded-lg border border-border bg-muted/40">
                 <button
-                  onClick={() => copyJson(sourceDataJson)}
+                  onClick={() => copyJson(sourceDataJson, "source")}
                   disabled={!sourceDataJson}
-                  className="absolute right-2 top-2 rounded-md bg-background p-1 text-muted-foreground shadow-sm hover:text-foreground"
-                  title="Copy"
+                  className="absolute right-2 top-2 flex items-center gap-1 rounded-md bg-background px-1.5 py-1 text-muted-foreground shadow-sm hover:text-foreground"
+                  title={copiedKey === "source" ? "Copied!" : "Copy"}
                 >
-                  <Copy className="size-3.5" />
+                  {copiedKey === "source" ? (
+                    <>
+                      <Check className="size-3.5 text-green-500" />
+                      <span className="text-[10px] text-green-500">Copied</span>
+                    </>
+                  ) : (
+                    <Copy className="size-3.5" />
+                  )}
                 </button>
                 <pre className="no-scrollbar max-h-64 overflow-auto p-3 text-[10px] leading-relaxed text-foreground">
                   {sourceDataJson ? JSON.stringify(sourceDataJson, null, 4) : "Loading…"}
@@ -1445,12 +1886,19 @@ export function AnnotationToolPage() {
               <p className="mb-1.5 text-xs font-semibold text-muted-foreground">Annotation Data</p>
               <div className="relative rounded-lg border border-border bg-muted/40">
                 <button
-                  onClick={() => copyJson(annotationDataJson)}
+                  onClick={() => copyJson(annotationDataJson, "annotation")}
                   disabled={!annotationDataJson}
-                  className="absolute right-2 top-2 rounded-md bg-background p-1 text-muted-foreground shadow-sm hover:text-foreground"
-                  title="Copy"
+                  className="absolute right-2 top-2 flex items-center gap-1 rounded-md bg-background px-1.5 py-1 text-muted-foreground shadow-sm hover:text-foreground"
+                  title={copiedKey === "annotation" ? "Copied!" : "Copy"}
                 >
-                  <Copy className="size-3.5" />
+                  {copiedKey === "annotation" ? (
+                    <>
+                      <Check className="size-3.5 text-green-500" />
+                      <span className="text-[10px] text-green-500">Copied</span>
+                    </>
+                  ) : (
+                    <Copy className="size-3.5" />
+                  )}
                 </button>
                 <pre className="no-scrollbar max-h-64 overflow-auto p-3 text-[10px] leading-relaxed text-foreground">
                   {annotationDataJson ? JSON.stringify(annotationDataJson, null, 4) : "Loading…"}
@@ -1471,9 +1919,17 @@ export function AnnotationToolPage() {
               <div className="flex items-center justify-between border-b border-brand/20 px-3 py-2">
                 <p className="text-xs font-semibold text-foreground">Annotation Editor</p>
                 <div className="flex items-center gap-2">
-                  <button title="More" className="text-muted-foreground hover:text-foreground">
-                    <MoreVertical className="size-3.5" />
-                  </button>
+                  {editingAnnotationId && (
+                    <button
+                      onClick={(e) =>
+                        setContextMenu({ annotationId: editingAnnotationId, x: e.clientX, y: e.clientY })
+                      }
+                      title="More"
+                      className="text-muted-foreground hover:text-foreground"
+                    >
+                      <MoreVertical className="size-3.5" />
+                    </button>
+                  )}
                   <button
                     onClick={pendingShape ? handleDiscardPendingShape : closeAnnotationEditor}
                     className="text-muted-foreground hover:text-foreground"
@@ -1853,6 +2309,7 @@ export function AnnotationToolPage() {
               {!hideLabels &&
                 annotations
                   .filter((a) => a.bbox && !hiddenIds.has(a.id))
+                  .sort((a, b) => a.zIndex - b.zIndex)
                   .map((ann) => (
                     <AnnotationBoxOverlay
                       key={ann.id}
@@ -1868,6 +2325,7 @@ export function AnnotationToolPage() {
                       onDelete={() => handleDelete(ann.id)}
                       onContextMenu={(e) => {
                         e.preventDefault()
+                        e.stopPropagation()
                         setContextMenu({ annotationId: ann.id, x: e.clientX, y: e.clientY })
                       }}
                       onBodyMouseDown={(e) => startBoxDrag("move", ann.id, undefined, e)}
@@ -2017,6 +2475,7 @@ export function AnnotationToolPage() {
                 {!hideLabels &&
                   annotations
                     .filter((a) => a.polygon && a.polygon.length > 0 && !hiddenIds.has(a.id))
+                    .sort((a, b) => a.zIndex - b.zIndex)
                     .map((a) => (
                       <polygon
                         key={a.id}
@@ -2025,6 +2484,7 @@ export function AnnotationToolPage() {
                         }}
                         onContextMenu={(e) => {
                           e.preventDefault()
+                          e.stopPropagation()
                           setContextMenu({ annotationId: a.id, x: e.clientX, y: e.clientY })
                         }}
                         onMouseEnter={() => setHoveredPolygonId(a.id)}
@@ -2196,7 +2656,11 @@ export function AnnotationToolPage() {
                 </div>
               )}
             </div>
-            <button className="text-muted-foreground hover:text-foreground" title="Keyboard shortcuts">
+            <button
+              onClick={() => setShortcutsOpen(true)}
+              className="text-muted-foreground hover:text-foreground"
+              title="Keyboard shortcuts"
+            >
               <Keyboard className="size-4" />
             </button>
           </div>
@@ -2223,6 +2687,15 @@ export function AnnotationToolPage() {
             onClick={() => setActiveTool("brush")}
           >
             <Brush className="size-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={handleRepeatPrevious}
+            disabled={repeatingPrevious || currentIndex === 0}
+            title="Repeat Previous (R) — copies every annotation from the last image onto this one. Useful for video frames."
+          >
+            <Repeat className="size-4" />
           </Button>
           <Button variant="ghost" size="icon" disabled title="Magic select (coming soon)">
             <Wand2 className="size-4" />
@@ -2267,9 +2740,75 @@ export function AnnotationToolPage() {
       {contextMenu && (
         <div
           ref={contextMenuRef}
-          className="fixed z-50 w-44 overflow-hidden rounded-md border border-border bg-popover py-1 text-popover-foreground shadow-lg"
+          className="fixed z-50 w-56 overflow-hidden rounded-md border border-border bg-popover py-1 text-popover-foreground shadow-lg"
           style={{ left: contextMenu.x, top: contextMenu.y }}
         >
+          <button
+            disabled
+            title="Coming soon — needs an AI segmentation model we haven't wired up yet"
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-muted-foreground/50"
+          >
+            <Wand2 className="size-3.5" />
+            Convert to Smart Polygon
+          </button>
+          <button
+            disabled
+            title="Coming soon — needs an AI segmentation model we haven't wired up yet"
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-muted-foreground/50"
+          >
+            <WandSparkles className="size-3.5" />
+            Convert to Smart Mask
+          </button>
+          <button
+            disabled
+            title="Coming soon — pixel-level masks aren't supported yet"
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-muted-foreground/50"
+          >
+            <VenetianMask className="size-3.5" />
+            Convert to Mask
+          </button>
+          <div className="my-1 h-px bg-border" />
+          <button
+            onClick={() => {
+              handleBringToFront(contextMenu.annotationId)
+              setContextMenu(null)
+            }}
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
+          >
+            <BringToFront className="size-3.5" />
+            Bring to Front
+          </button>
+          <button
+            onClick={() => {
+              handleSendToBack(contextMenu.annotationId)
+              setContextMenu(null)
+            }}
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
+          >
+            <SendToBack className="size-3.5" />
+            Send to Back
+          </button>
+          <button
+            onClick={() => {
+              handleBringForward(contextMenu.annotationId)
+              setContextMenu(null)
+            }}
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
+          >
+            <Layers2 className="size-3.5" />
+            Bring Forward
+          </button>
+          <button
+            onClick={() => {
+              handleSendBackward(contextMenu.annotationId)
+              setContextMenu(null)
+            }}
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
+          >
+            <LayersMinus className="size-3.5" />
+            Send Backward
+          </button>
+          <div className="my-1 h-px bg-border" />
           <button
             onClick={() => {
               handleDuplicate(contextMenu.annotationId)
@@ -2290,6 +2829,80 @@ export function AnnotationToolPage() {
             <Trash2 className="size-3.5" />
             Delete
           </button>
+        </div>
+      )}
+
+      {shortcutsOpen && (
+        <div
+          className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-black/50 p-6 backdrop-blur-[2px]"
+          onClick={() => setShortcutsOpen(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-lg rounded-xl bg-popover text-popover-foreground shadow-2xl"
+          >
+            <div className="relative flex flex-col items-center gap-2 border-b border-border px-6 pb-5 pt-6">
+              <button
+                onClick={() => setShortcutsOpen(false)}
+                className="absolute right-4 top-4 text-muted-foreground hover:text-foreground"
+              >
+                <X className="size-4" />
+              </button>
+              <div className="flex size-9 items-center justify-center rounded-full bg-brand/10 text-brand">
+                <Keyboard className="size-4" />
+              </div>
+              <p className="text-base font-semibold text-foreground">Keyboard Shortcuts</p>
+              <div className="relative mt-1 w-full">
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={shortcutSearch}
+                  onChange={(e) => setShortcutSearch(e.target.value)}
+                  placeholder="Search shortcuts…"
+                  className="h-9 pl-8 text-sm"
+                  autoFocus
+                />
+              </div>
+            </div>
+            <div className="max-h-[60vh] overflow-y-auto px-6 py-4">
+              {SHORTCUT_GROUPS.map((group) => {
+                const items = group.items.filter((item) =>
+                  item.label.toLowerCase().includes(shortcutSearch.trim().toLowerCase())
+                )
+                if (items.length === 0) return null
+                return (
+                  <div key={group.title} className="mb-5 last:mb-0">
+                    <p className="mb-2 text-xs font-semibold text-foreground">{group.title}</p>
+                    <div className="flex flex-col gap-2.5">
+                      {items.map((item) => (
+                        <div key={item.label} className="flex items-start gap-3">
+                          <div className="flex w-24 shrink-0 flex-wrap items-center gap-1 pt-0.5">
+                            {item.keys.map((k, i) => (
+                              <kbd
+                                key={i}
+                                className="rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+                              >
+                                {k}
+                              </kbd>
+                            ))}
+                          </div>
+                          <div>
+                            <p className="text-sm text-foreground">{item.label}</p>
+                            {item.hint && <p className="text-xs text-muted-foreground">{item.hint}</p>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })}
+              {SHORTCUT_GROUPS.every(
+                (group) =>
+                  group.items.filter((item) =>
+                    item.label.toLowerCase().includes(shortcutSearch.trim().toLowerCase())
+                  ).length === 0
+              ) && <p className="py-6 text-center text-sm text-muted-foreground">No matching shortcuts.</p>}
+            </div>
+          </div>
         </div>
       )}
     </div>

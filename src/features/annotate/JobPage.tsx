@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { useParams, useNavigate, Link } from "react-router-dom"
-import { X, Pencil, Check } from "lucide-react"
+import { X, Pencil, Check, RotateCcw, Activity, ShieldCheck } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
@@ -16,10 +16,13 @@ import {
 import {
   getJob, getJobImages, getJobActivity, updateJobInstructions, updateJobTitle, listJobReviewers,
 } from "@/lib/jobApi"
+import { sendImageToUnannotated } from "@/lib/commentApi"
 import { InstructionsEditor } from "@/components/shared/InstructionsEditor"
 import { useWorkspaceStore } from "@/stores/workspaceStore"
+import { useToastStore } from "@/stores/toastStore"
 import { ReassignJobDialog } from "./ReassignJobDialog"
 import { SubmitForReviewDialog } from "./SubmitForReviewDialog"
+import { AddToDatasetDialog } from "./AddToDatasetDialog"
 import type { JobDetail, JobImageSummary, JobActivityEntry, JobReviewerSummary } from "@/types/job"
 
 type Tab = "unannotated" | "annotated"
@@ -34,6 +37,9 @@ export function JobPage() {
   const [images, setImages] = useState<JobImageSummary[]>([])
   const [loadingImages, setLoadingImages] = useState(true)
   const [selectedImageIds, setSelectedImageIds] = useState<string[]>([])
+  const [addToDatasetOpen, setAddToDatasetOpen] = useState(false)
+  const [sendingSelectedToUnannotated, setSendingSelectedToUnannotated] = useState(false)
+  const addToast = useToastStore((s) => s.addToast)
 
   const [activity, setActivity] = useState<JobActivityEntry[]>([])
 
@@ -52,6 +58,46 @@ export function JobPage() {
   function refetchJob() {
     if (!workspaceId || !projectId || !jobId) return
     getJob(workspaceId, projectId, jobId).then(setJob)
+  }
+
+  async function handleSendSelectedToUnannotated() {
+    if (!workspaceId || !projectId || selectedImageIds.length === 0 || sendingSelectedToUnannotated) return
+    setSendingSelectedToUnannotated(true)
+    try {
+      const results = await Promise.allSettled(
+        selectedImageIds.map((id) => sendImageToUnannotated(workspaceId, projectId, id))
+      )
+      // A 404 here just means that image is already gone (e.g. deleted
+      // earlier, or a duplicate click) — not a real failure.
+      const realFailures = results.filter(
+        (r) => r.status === "rejected" && (r.reason as { response?: { status?: number } })?.response?.status !== 404
+      )
+      if (realFailures.length > 0) {
+        addToast({ variant: "error", title: "Couldn't send some images", description: "Please try again." })
+      } else {
+        addToast({
+          variant: "success",
+          title: "Sent to unannotated",
+          description: `${selectedImageIds.length} image${selectedImageIds.length !== 1 ? "s" : ""}`,
+        })
+      }
+      setImages((prev) => prev.filter((img) => !selectedImageIds.includes(img.id)))
+      setSelectedImageIds([])
+      refetchJob()
+    } finally {
+      setSendingSelectedToUnannotated(false)
+    }
+  }
+
+  function handleDatasetAdded(res: { job_id: string; images_added: number }) {
+    addToast({
+      variant: "success",
+      title: "Added to dataset",
+      description: `${res.images_added} image${res.images_added !== 1 ? "s" : ""}`,
+    })
+    // Promoted images move out of this job — it may now be empty (and
+    // deleted server-side), so head back to the board rather than refetch.
+    navigate(`/projects/${projectId}/annotate`)
   }
 
   function refetchActivity() {
@@ -79,6 +125,11 @@ export function JobPage() {
 
   function toggleImageSelect(id: string) {
     setSelectedImageIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+  }
+
+  const allSelected = images.length > 0 && selectedImageIds.length === images.length
+  function toggleSelectAll() {
+    setSelectedImageIds(allSelected ? [] : images.map((img) => img.id))
   }
 
   const progressPercent = useMemo(() => {
@@ -138,7 +189,7 @@ export function JobPage() {
   return (
     <div className="flex flex-1 overflow-hidden">
       {/* Left panel */}
-      <div className="flex w-80 shrink-0 flex-col overflow-y-auto border-r border-border p-6">
+      <div className="flex w-72 shrink-0 flex-col overflow-y-auto border-r border-border p-6">
         <p className="mb-2 text-sm font-semibold text-foreground">Progress</p>
 
         <div className="mb-1 flex items-center justify-between">
@@ -299,11 +350,33 @@ export function JobPage() {
             </div>
           )}
           <div className="flex items-center gap-2">
-            <Button variant="brand" asChild>
-              <Link to={`/projects/${projectId}/annotate/tool/${job.id}`}>Start Annotating</Link>
-            </Button>
+            {tab === "unannotated" && (
+              <Button variant="brand" asChild>
+                <Link to={`/projects/${projectId}/annotate/tool/${job.id}`}>Start Annotating</Link>
+              </Button>
+            )}
+            {tab === "annotated" && selectedImageIds.length > 0 && (
+              <Button
+                variant="outline"
+                onClick={handleSendSelectedToUnannotated}
+                disabled={sendingSelectedToUnannotated}
+              >
+                <RotateCcw className="size-4" />
+                {sendingSelectedToUnannotated
+                  ? "Sending…"
+                  : `Send ${selectedImageIds.length} Image${selectedImageIds.length !== 1 ? "s" : ""} To Unannotated`}
+              </Button>
+            )}
             <Button variant="outline" onClick={() => setReviewOpen(true)}>
               Submit for Review
+            </Button>
+            <Button
+              variant="brand"
+              onClick={() => setAddToDatasetOpen(true)}
+              disabled={!job.annotated_count}
+            >
+              <Check className="size-4" />
+              {`Add ${job.annotated_count} Image${job.annotated_count !== 1 ? "s" : ""} To Dataset`}
             </Button>
             <button
               onClick={() => navigate(`/projects/${projectId}/annotate`)}
@@ -352,11 +425,10 @@ export function JobPage() {
             </button>
           </div>
           <div className="flex items-center gap-3">
-            {selectedImageIds.length > 0 && (
-              <span className="text-sm text-muted-foreground">
-                {selectedImageIds.length} selected
-              </span>
-            )}
+            <label className="flex items-center gap-1.5 text-sm text-muted-foreground">
+              <Checkbox checked={allSelected} onCheckedChange={toggleSelectAll} />
+              {selectedImageIds.length > 0 ? `${selectedImageIds.length} selected` : "Select all"}
+            </label>
             <span className="text-sm text-muted-foreground">Sort By:</span>
             <Select defaultValue="newest">
               <SelectTrigger className="w-36">
@@ -378,6 +450,14 @@ export function JobPage() {
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
             {images.map((img) => {
               const selected = selectedImageIds.includes(img.id)
+              const splitInfo =
+                img.split === "train"
+                  ? { label: "Train", icon: Activity }
+                  : img.split === "valid"
+                    ? { label: "Valid", icon: ShieldCheck }
+                    : img.split === "test"
+                      ? { label: "Test", icon: Pencil }
+                      : null
               return (
                 <div key={img.id} className="group relative flex flex-col gap-1.5">
                   <div
@@ -390,7 +470,7 @@ export function JobPage() {
                       checked={selected}
                       onCheckedChange={() => toggleImageSelect(img.id)}
                       onClick={(e) => e.stopPropagation()}
-                      className="absolute top-1.5 left-1.5 z-10 bg-background/90 shadow-sm data-[state=unchecked]:opacity-0 group-hover:data-[state=unchecked]:opacity-100"
+                      className="absolute top-1.5 right-1.5 z-10 bg-background/90 shadow-sm data-[state=unchecked]:opacity-0 group-hover:data-[state=unchecked]:opacity-100"
                     />
                     {img.thumbnail_url ? (
                       <img src={img.thumbnail_url} alt={img.filename} className="size-full object-cover" />
@@ -399,9 +479,10 @@ export function JobPage() {
                         Processing…
                       </div>
                     )}
-                    {tab === "annotated" && (
-                      <span className="absolute top-1.5 right-1.5 flex size-5 items-center justify-center rounded-full bg-brand text-brand-foreground">
-                        <Check className="size-3" />
+                    {splitInfo && (
+                      <span className="absolute bottom-1.5 left-1.5 flex items-center gap-1 rounded-full bg-brand px-2 py-0.5 text-[10px] font-medium text-brand-foreground shadow-sm">
+                        <splitInfo.icon className="size-2.5" />
+                        {splitInfo.label}
                       </span>
                     )}
                   </div>
@@ -427,6 +508,16 @@ export function JobPage() {
               refetchJob()
               refetchActivity()
             }}
+          />
+          <AddToDatasetDialog
+            workspaceId={workspaceId}
+            projectId={projectId}
+            jobId={job.id}
+            labeledCount={job.annotated_count}
+            remainingCount={job.unannotated_count}
+            open={addToDatasetOpen}
+            onOpenChange={setAddToDatasetOpen}
+            onAdded={handleDatasetAdded}
           />
           <SubmitForReviewDialog
             workspaceId={workspaceId}

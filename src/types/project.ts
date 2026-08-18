@@ -19,6 +19,7 @@ export interface Project {
   is_active: boolean
   created_at: string
   thumbnail_url: string | null
+  classes_locked: boolean
 }
 
 export interface ProjectFolder {

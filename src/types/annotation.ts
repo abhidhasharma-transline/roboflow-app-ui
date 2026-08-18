@@ -18,6 +18,7 @@ export interface Annotation {
   color: string
   bbox?: BoundingBox
   polygon?: Point[]
+  zIndex: number
   createdBy: string
   createdAt: string
 }

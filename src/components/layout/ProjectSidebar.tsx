@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useParams, Link, useNavigate } from "react-router-dom"
 import { GuardedNavLink as NavLink } from "./GuardedNavLink"
 import {
@@ -40,6 +40,7 @@ import { useProject } from "@/hooks/useProjects"
 import { useActiveWorkspace } from "@/hooks/useActiveWorkspace"
 import { useWorkspaceStore } from "@/stores/workspaceStore"
 import { renameProject, deleteProject } from "@/lib/projectApi"
+import { listProjectImages } from "@/lib/imageApi"
 
 interface SubNavItem {
   label: string
@@ -58,6 +59,14 @@ export function ProjectSidebar() {
   const { name: workspaceName } = useActiveWorkspace()
   const [dataOpen, setDataOpen] = useState(true)
   const [modelsOpen, setModelsOpen] = useState(true)
+  const [datasetCount, setDatasetCount] = useState<number | undefined>(undefined)
+
+  useEffect(() => {
+    if (!workspaceId || !projectId) return
+    listProjectImages(workspaceId, projectId, { status: "dataset", limit: 1 })
+      .then((res) => setDatasetCount(res.total))
+      .catch(() => setDatasetCount(undefined))
+  }, [workspaceId, projectId])
 
   const [renameOpen, setRenameOpen] = useState(false)
   const [renameValue, setRenameValue] = useState("")
@@ -109,11 +118,12 @@ export function ProjectSidebar() {
     {
       label: "Dataset",
       icon: Database,
-      disabled: true,
+      path: `/projects/${projectId}/dataset`,
+      badge: datasetCount,
     },
     { label: "Versions", icon: Layers, disabled: true },
     { label: "Analytics", icon: HeartPulse, disabled: true },
-    { label: "Classes & Tags", icon: Tags, disabled: true },
+    { label: "Classes & Tags", icon: Tags, path: `/projects/${projectId}/classes` },
   ]
 
   const modelItems: SubNavItem[] = [
@@ -136,9 +146,17 @@ export function ProjectSidebar() {
         </Link>
 
         <div className="mb-2 overflow-hidden rounded-md border border-sidebar-border">
-          <div className="flex aspect-video items-center justify-center bg-muted">
-            <ImageIcon className="size-6 text-muted-foreground/40" />
-          </div>
+          {project?.thumbnail_url ? (
+            <img
+              src={project.thumbnail_url}
+              alt={project.name}
+              className="aspect-video w-full object-cover"
+            />
+          ) : (
+            <div className="flex aspect-video items-center justify-center bg-muted">
+              <ImageIcon className="size-6 text-muted-foreground/40" />
+            </div>
+          )}
         </div>
 
         <div className="flex items-center justify-between gap-2">

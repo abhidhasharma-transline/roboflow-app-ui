@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
 import { useParams, Link } from "react-router-dom"
-import { ClipboardList, Upload, MoreVertical, Info, HelpCircle } from "lucide-react"
+import { ClipboardList, Upload, MoreVertical, Info, HelpCircle, Download } from "lucide-react"
 import {
   Select,
   SelectTrigger,
@@ -477,22 +477,200 @@ function ActiveJobCard({
   )
 }
 
+function DatasetJobCard({
+  job,
+  projectId,
+  workspaceId,
+  onChanged,
+}: {
+  job: JobSummary
+  projectId: string
+  workspaceId: string
+  onChanged: () => void
+}) {
+  const labelerText =
+    job.assignments.length === 0
+      ? null
+      : job.assignments.length === 1
+        ? job.assignments[0].name
+        : `${job.assignments[0].name} +${job.assignments.length - 1} more`
+
+  const [renameOpen, setRenameOpen] = useState(false)
+  const [renameValue, setRenameValue] = useState(job.title)
+  const [renameSaving, setRenameSaving] = useState(false)
+
+  const [tagOpen, setTagOpen] = useState(false)
+  const [tagDraft, setTagDraft] = useState<string[]>([])
+  const [tagSaving, setTagSaving] = useState(false)
+
+  const [moveOpen, setMoveOpen] = useState(false)
+  const [moving, setMoving] = useState(false)
+
+  const addToast = useToastStore((s) => s.addToast)
+
+  async function handleRename(e: React.FormEvent) {
+    e.preventDefault()
+    if (!renameValue.trim()) return
+    setRenameSaving(true)
+    try {
+      await updateJobTitle(workspaceId, projectId, job.id, renameValue.trim())
+      setRenameOpen(false)
+      onChanged()
+    } finally {
+      setRenameSaving(false)
+    }
+  }
+
+  async function handleApplyTags() {
+    if (tagDraft.length === 0) return
+    setTagSaving(true)
+    try {
+      await tagJobImages(workspaceId, projectId, job.id, tagDraft)
+      setTagOpen(false)
+      setTagDraft([])
+    } finally {
+      setTagSaving(false)
+    }
+  }
+
+  async function handleMove() {
+    setMoving(true)
+    try {
+      await moveJobToUnassigned(workspaceId, projectId, job.id)
+      setMoveOpen(false)
+      onChanged()
+      addToast({ variant: "success", title: "Moved to unassigned", description: job.title })
+    } catch {
+      addToast({ variant: "error", title: "Couldn't move to unassigned", description: "Please try again." })
+    } finally {
+      setMoving(false)
+    }
+  }
+
+  return (
+    <div className="rounded-lg border border-border p-4">
+      <div className="mb-2 flex items-start justify-between gap-2">
+        <p className="text-sm font-medium text-foreground">{job.title}</p>
+        <DropdownMenu>
+          <DropdownMenuTrigger className="shrink-0 text-muted-foreground hover:text-foreground">
+            <MoreVertical className="size-4" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem
+              onClick={() => {
+                setRenameValue(job.title)
+                setRenameOpen(true)
+              }}
+            >
+              Rename Job
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setTagOpen(true)}>Tag Images</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setMoveOpen(true)}>Move to unassigned</DropdownMenuItem>
+            <DropdownMenuItem disabled title="Coming soon — no export pipeline yet">
+              <Download className="size-3.5" />
+              Download
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      {labelerText && (
+        <p className="mb-3 text-sm text-foreground">
+          <span className="font-medium">Labeler:</span> {labelerText}
+        </p>
+      )}
+
+      <p className="mb-1 text-sm font-medium text-foreground">
+        {job.total_images} Image{job.total_images !== 1 && "s"}
+      </p>
+
+      <div className="text-right">
+        <Link
+          to={`/projects/${projectId}/annotate/job/${job.id}`}
+          className="text-sm font-medium text-brand hover:underline"
+        >
+          View Images →
+        </Link>
+      </div>
+
+      <Dialog open={renameOpen} onOpenChange={renameSaving ? undefined : setRenameOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Rename job</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleRename} className="flex flex-col gap-4">
+            <Input value={renameValue} onChange={(e) => setRenameValue(e.target.value)} autoFocus />
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setRenameOpen(false)} disabled={renameSaving}>
+                Cancel
+              </Button>
+              <Button type="submit" variant="brand" disabled={renameSaving || !renameValue.trim()}>
+                {renameSaving ? "Saving…" : "Save"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={tagOpen} onOpenChange={tagSaving ? undefined : setTagOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Tag all images in this job</DialogTitle>
+          </DialogHeader>
+          <TagInput value={tagDraft} onChange={setTagDraft} placeholder="Type a tag and press Enter…" />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTagOpen(false)} disabled={tagSaving}>
+              Cancel
+            </Button>
+            <Button variant="brand" onClick={handleApplyTags} disabled={tagSaving || tagDraft.length === 0}>
+              {tagSaving ? "Applying…" : "Apply Tags"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={moveOpen} onOpenChange={moving ? undefined : setMoveOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Move images back to unassigned?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            This job will be removed and its {job.total_images} image{job.total_images !== 1 && "s"} will
+            go back to the Unassigned column as a batch.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMoveOpen(false)} disabled={moving}>
+              Cancel
+            </Button>
+            <Button variant="brand" onClick={handleMove} disabled={moving}>
+              {moving ? "Moving…" : "Move to unassigned"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
 export function AnnotatePage() {
   const { projectId } = useParams()
   const workspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   const [unassignedBatches, setUnassignedBatches] = useState<BatchSummary[]>([])
   const [activeJobs, setActiveJobs] = useState<JobSummary[]>([])
+  const [datasetJobs, setDatasetJobs] = useState<JobSummary[]>([])
   const [loading, setLoading] = useState(true)
 
   function refetch() {
     if (!workspaceId || !projectId) return
     Promise.all([
       listBatches(workspaceId, projectId, "unassigned"),
-      listJobs(workspaceId, projectId, "active"),
+      listJobs(workspaceId, projectId, undefined, "annotating"),
+      listJobs(workspaceId, projectId, undefined, "dataset"),
     ])
-      .then(([batches, jobs]) => {
+      .then(([batches, jobs, dataset]) => {
         setUnassignedBatches(batches)
         setActiveJobs(jobs)
+        setDatasetJobs(dataset)
       })
       .finally(() => setLoading(false))
   }
@@ -580,19 +758,29 @@ export function AnnotatePage() {
             </div>
           </div>
 
-          {/* Dataset — same */}
+          {/* Dataset — real dataset-stage jobs */}
           <div className="flex flex-col rounded-xl border border-border">
             <div className="border-b border-border p-4 text-center">
               <h2 className="flex items-center justify-center gap-1.5 text-base font-semibold text-foreground">
                 Dataset
                 <ColumnHelp text="Approved annotated images are added here to build your training dataset." />
               </h2>
-              <p className="mt-0.5 text-xs text-muted-foreground">0 Jobs</p>
-            </div>
-            <div className="flex flex-1 flex-col items-center justify-center gap-3 p-4 text-center">
-              <p className="text-sm text-muted-foreground">
-                Approve annotated images to add them to your dataset.
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {datasetJobs.length} Job{datasetJobs.length !== 1 && "s"}
               </p>
+            </div>
+            <div className="flex flex-1 flex-col gap-3 p-4">
+              {datasetJobs.length === 0 ? (
+                <div className="flex flex-1 flex-col items-center justify-center gap-3 py-10 text-center">
+                  <p className="text-sm text-muted-foreground">
+                    Approve annotated images to add them to your dataset.
+                  </p>
+                </div>
+              ) : (
+                datasetJobs.map((job) => (
+                  <DatasetJobCard key={job.id} job={job} projectId={projectId!} workspaceId={workspaceId!} onChanged={refetch} />
+                ))
+              )}
             </div>
           </div>
         </div>

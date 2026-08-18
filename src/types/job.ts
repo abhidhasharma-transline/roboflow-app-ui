@@ -56,6 +56,8 @@ export interface JobImageSummary {
   filename: string
   thumbnail_url: string | null
   url: string
+  status: string
+  split: "train" | "valid" | "test" | null
 }
 
 export interface JobSummary {

@@ -14,6 +14,7 @@ import { BatchAssignPage } from "@/features/annotate/BatchAssignPage"
 import { JobPage } from "@/features/annotate/JobPage"
 import { AnnotationToolPage } from "@/features/annotate/AnnotationTool"
 import { DatasetPage } from "@/features/dataset/DatasetPage"
+import { ClassesTagsPage } from "@/features/classes/ClassesTagsPage"
 import { VersionsPage } from "@/features/versions/VersionsPage"
 import { SettingsLayout } from "@/features/settings/SettingsLayout"
 import { AccountSettingsPage } from "@/features/settings/AccountSettingsPage"
@@ -92,6 +93,7 @@ function App() {
             element={<JobPage />}
           />
           <Route path="/projects/:projectId/dataset" element={<DatasetPage />} />
+          <Route path="/projects/:projectId/classes" element={<ClassesTagsPage />} />
           <Route path="/projects/:projectId/versions" element={<VersionsPage />} />
 
           <Route path="/notifications" element={<NotificationsPage />} />

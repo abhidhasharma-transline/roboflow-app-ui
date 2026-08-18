@@ -42,7 +42,9 @@ import {
 import { fetchBatchPreview } from "@/lib/uploadApi"
 import { getBatch, createJob, renameBatch } from "@/lib/jobApi"
 import { bulkApplyTags, bulkApplyMetadata, listTags, type ImageTag } from "@/lib/tagApi"
+import { removeImageFromProject } from "@/lib/commentApi"
 import { useWorkspaceStore } from "@/stores/workspaceStore"
+import { useToastStore } from "@/stores/toastStore"
 import { AssignTeamFields, type AssignTeamFieldsHandle } from "./AssignTeamFields"
 import { AddImagesToBatchDialog } from "./AddImagesToBatchDialog"
 import type { BatchPreviewImage } from "@/types/upload"
@@ -107,6 +109,7 @@ export function BatchAssignPage() {
   const { projectId, batchId } = useParams<{ projectId: string; batchId: string }>()
   const navigate = useNavigate()
   const workspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
+  const addToast = useToastStore((s) => s.addToast)
 
   const [batchName, setBatchName] = useState<string>("")
   const [createdAt, setCreatedAt] = useState<string | null>(null)
@@ -126,6 +129,7 @@ export function BatchAssignPage() {
   const [metadataKeyDraft, setMetadataKeyDraft] = useState("")
   const [metadataValueDraft, setMetadataValueDraft] = useState("")
   const [applyingTags, setApplyingTags] = useState(false)
+  const [deletingSelected, setDeletingSelected] = useState(false)
 
   function resetTagDialog() {
     setTagSearch("")
@@ -176,6 +180,28 @@ export function BatchAssignPage() {
       listTags(workspaceId, projectId).then(setProjectTags).catch(() => {})
     } finally {
       setApplyingTags(false)
+    }
+  }
+
+  async function handleDeleteSelected() {
+    if (!workspaceId || !projectId || selectedIds.length === 0 || deletingSelected) return
+    setDeletingSelected(true)
+    try {
+      const results = await Promise.allSettled(
+        selectedIds.map((id) => removeImageFromProject(workspaceId, projectId, id))
+      )
+      const realFailures = results.filter(
+        (r) => r.status === "rejected" && (r.reason as { response?: { status?: number } })?.response?.status !== 404
+      )
+      if (realFailures.length > 0) {
+        addToast({ variant: "error", title: "Couldn't delete some images", description: "Please try again." })
+      } else {
+        addToast({ variant: "success", title: "Images deleted", description: `${selectedIds.length} image(s)` })
+      }
+      setImages((prev) => prev.filter((img) => !selectedIds.includes(img.id)))
+      setSelectedIds([])
+    } finally {
+      setDeletingSelected(false)
     }
   }
 
@@ -567,9 +593,15 @@ export function BatchAssignPage() {
               <UserPlus className="size-3.5" />
               Assign for Labeling
             </Button>
-            <Button variant="outline" size="sm" disabled={selectedIds.length === 0}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-destructive hover:text-destructive"
+              disabled={selectedIds.length === 0 || deletingSelected}
+              onClick={handleDeleteSelected}
+            >
               <Trash2 className="size-3.5" />
-              Delete Image
+              {deletingSelected ? "Deleting…" : "Delete Image"}
             </Button>
           </div>
         )}

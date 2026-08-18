@@ -4,6 +4,7 @@ export interface ImageTag {
   id: string
   name: string
   is_active: boolean
+  image_count: number
 }
 
 export interface ImageMetadataItem {
@@ -51,6 +52,28 @@ export async function removeImageTag(
   tagId: string
 ): Promise<void> {
   await api.delete(`${imageTagsBase(workspaceId, projectId, imageId)}/${tagId}`)
+}
+
+export async function createTag(workspaceId: string, projectId: string, name: string): Promise<ImageTag> {
+  const res = await api.post<ImageTag>(`/workspaces/${workspaceId}/projects/${projectId}/tags`, { name })
+  return res.data
+}
+
+export async function updateTag(
+  workspaceId: string,
+  projectId: string,
+  tagId: string,
+  name: string
+): Promise<ImageTag> {
+  const res = await api.patch<ImageTag>(
+    `/workspaces/${workspaceId}/projects/${projectId}/tags/${tagId}`,
+    { name }
+  )
+  return res.data
+}
+
+export async function deleteTag(workspaceId: string, projectId: string, tagId: string): Promise<void> {
+  await api.delete(`/workspaces/${workspaceId}/projects/${projectId}/tags/${tagId}`)
 }
 
 export async function bulkApplyTags(
