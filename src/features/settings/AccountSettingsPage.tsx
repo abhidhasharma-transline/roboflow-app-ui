@@ -49,7 +49,7 @@ export function AccountSettingsPage() {
 
   function refetchWorkspaces() {
     setIsLoadingWorkspaces(true)
-    listWorkspaces()
+    listWorkspaces({ mineOnly: true })
       .then(async (workspaces) => {
         const rows = await Promise.all(
           workspaces.map(async (workspace) => {
@@ -152,6 +152,7 @@ export function AccountSettingsPage() {
               <div className="flex flex-col gap-1.5">
                 <Label>Contact number</Label>
                 <Input
+                  type="tel"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
                   placeholder="Optional"

@@ -16,6 +16,8 @@ import { AnnotationToolPage } from "@/features/annotate/AnnotationTool"
 import { DatasetPage } from "@/features/dataset/DatasetPage"
 import { ClassesTagsPage } from "@/features/classes/ClassesTagsPage"
 import { VersionsPage } from "@/features/versions/VersionsPage"
+import { VersionImagesPage } from "@/features/versions/VersionImagesPage"
+import { ProjectTeamPage } from "@/features/projects/ProjectTeamPage"
 import { SettingsLayout } from "@/features/settings/SettingsLayout"
 import { AccountSettingsPage } from "@/features/settings/AccountSettingsPage"
 import { WorkspacesOverviewPage } from "@/features/settings/WorkspacesOverviewPage"
@@ -95,6 +97,8 @@ function App() {
           <Route path="/projects/:projectId/dataset" element={<DatasetPage />} />
           <Route path="/projects/:projectId/classes" element={<ClassesTagsPage />} />
           <Route path="/projects/:projectId/versions" element={<VersionsPage />} />
+          <Route path="/projects/:projectId/versions/:versionId/images" element={<VersionImagesPage />} />
+          <Route path="/projects/:projectId/team" element={<ProjectTeamPage />} />
 
           <Route path="/notifications" element={<NotificationsPage />} />
 

@@ -27,7 +27,8 @@ export interface User {
 }
 
 export interface LoginRequest {
-  email: string
+  /** Email or username — the backend tries both columns. */
+  identifier: string
   password: string
 }
 
@@ -69,8 +70,13 @@ export interface ChangePasswordRequest {
   new_password: string
 }
 
+export interface ActivityActionGroup {
+  action: string
+  count: number
+}
+
 export interface ActivityDay {
   date: string   // YYYY-MM-DD
-  count: number
-  actions: string[]
+  count: number                  // true total, uncapped
+  actions: ActivityActionGroup[] // grouped by action text, capped server-side
 }

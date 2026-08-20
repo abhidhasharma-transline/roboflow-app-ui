@@ -7,8 +7,13 @@ import type {
   MemberAccessPayload,
 } from "@/types/workspace"
 
-export async function listWorkspaces(): Promise<Workspace[]> {
-  const res = await api.get<Workspace[]>("/workspaces")
+/** mineOnly forces real-membership filtering even for a super admin — use it
+ *  anywhere "my own workspaces" is the intent (e.g. the profile page), as
+ *  opposed to the admin-wide "every workspace on the platform" view. */
+export async function listWorkspaces(opts?: { mineOnly?: boolean }): Promise<Workspace[]> {
+  const res = await api.get<Workspace[]>("/workspaces", {
+    params: opts?.mineOnly ? { mine_only: true } : undefined,
+  })
   return res.data
 }
 

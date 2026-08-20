@@ -24,7 +24,11 @@ export function WorkspaceSwitcher({ collapsed }: { collapsed?: boolean }) {
   useEffect(() => {
     let cancelled = false
 
-    listWorkspaces().then(async (list) => {
+    // mineOnly: this is "your workspaces" — even a super admin should only
+    // see workspaces they're actually a member of here, not every workspace
+    // on the platform (that bypass is reserved for the admin-wide
+    // /settings/workspaces panel).
+    listWorkspaces({ mineOnly: true }).then(async (list) => {
       if (cancelled) return
       setWorkspaces(list) // show immediately with whatever data we have
 

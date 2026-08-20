@@ -20,7 +20,7 @@ export function useDefaultWorkspace() {
     if (!user || activeWorkspaceId || attempted.current) return
     attempted.current = true
 
-    listWorkspaces()
+    listWorkspaces({ mineOnly: true })
       .then(async (workspaces) => {
         if (workspaces.length === 0) return
         const owned = workspaces.find((w) => w.owner_id === user.id)

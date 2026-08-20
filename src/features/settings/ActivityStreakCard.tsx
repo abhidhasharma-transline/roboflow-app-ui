@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { BarChart3 } from "lucide-react"
 import { SectionHeading } from "@/components/shared/SectionHeading"
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
 import { getMyActivity } from "@/lib/authApi"
 import type { ActivityDay } from "@/types/auth"
 
@@ -48,49 +49,53 @@ export function ActivityStreakCard() {
       .finally(() => setIsLoading(false))
   }, [])
 
-  const activityByDate = new Map(activity.map((a) => [a.date, a]))
+  const { days, monthLabels, totalColumns, totalActivities } = useMemo(() => {
+    const activityByDate = new Map(activity.map((a) => [a.date, a]))
 
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
 
-  // Align the grid so the first column starts on a Sunday (like GitHub)
-  const firstDay = new Date(today)
-  firstDay.setDate(firstDay.getDate() - (TOTAL_DAYS - 1))
-  const alignedStart = new Date(firstDay)
-  alignedStart.setDate(alignedStart.getDate() - alignedStart.getDay())
+    // Align the grid so the first column starts on a Sunday (like GitHub)
+    const firstDay = new Date(today)
+    firstDay.setDate(firstDay.getDate() - (TOTAL_DAYS - 1))
+    const alignedStart = new Date(firstDay)
+    alignedStart.setDate(alignedStart.getDate() - alignedStart.getDay())
 
-  const totalCells = Math.ceil((today.getTime() - alignedStart.getTime()) / 86400000) + 1
-  const totalColumns = Math.ceil(totalCells / 7)
+    const totalCells = Math.ceil((today.getTime() - alignedStart.getTime()) / 86400000) + 1
+    const totalColumns = Math.ceil(totalCells / 7)
 
-  const days: { date: string; count: number; actions: string[]; col: number; row: number }[] = []
-  for (let i = 0; i < totalColumns * 7; i++) {
-    const d = new Date(alignedStart)
-    d.setDate(d.getDate() + i)
-    if (d > today) break
-    const key = toDateKey(d)
-    const dayActivity = activityByDate.get(key)
-    days.push({
-      date: key,
-      count: dayActivity?.count ?? 0,
-      actions: dayActivity?.actions ?? [],
-      col: Math.floor(i / 7),
-      row: i % 7,
-    })
-  }
-
-  // Figure out which column each month label should sit above
-  const monthLabels: { col: number; label: string }[] = []
-  let lastMonth = -1
-  for (const day of days) {
-    if (day.row !== 0) continue
-    const d = new Date(day.date)
-    if (d.getMonth() !== lastMonth) {
-      monthLabels.push({ col: day.col, label: MONTH_NAMES[d.getMonth()] })
-      lastMonth = d.getMonth()
+    const days: { date: string; count: number; actions: ActivityDay["actions"]; col: number; row: number }[] = []
+    for (let i = 0; i < totalColumns * 7; i++) {
+      const d = new Date(alignedStart)
+      d.setDate(d.getDate() + i)
+      if (d > today) break
+      const key = toDateKey(d)
+      const dayActivity = activityByDate.get(key)
+      days.push({
+        date: key,
+        count: dayActivity?.count ?? 0,
+        actions: dayActivity?.actions ?? [],
+        col: Math.floor(i / 7),
+        row: i % 7,
+      })
     }
-  }
 
-  const totalActivities = activity.reduce((sum, a) => sum + a.count, 0)
+    // Figure out which column each month label should sit above
+    const monthLabels: { col: number; label: string }[] = []
+    let lastMonth = -1
+    for (const day of days) {
+      if (day.row !== 0) continue
+      const d = new Date(day.date)
+      if (d.getMonth() !== lastMonth) {
+        monthLabels.push({ col: day.col, label: MONTH_NAMES[d.getMonth()] })
+        lastMonth = d.getMonth()
+      }
+    }
+
+    const totalActivities = activity.reduce((sum, a) => sum + a.count, 0)
+
+    return { days, monthLabels, totalColumns, totalActivities }
+  }, [activity])
 
   return (
     <div className="rounded-lg border border-border p-5">
@@ -142,18 +147,34 @@ export function ActivityStreakCard() {
               }}
             >
               {days.map((day) => (
-                <div
-                  key={day.date}
-                  title={
-                    totalActivities === 0
-                      ? undefined
-                      : day.count === 0
-                        ? `No activity on ${day.date}`
-                        : `${day.date}:\n${day.actions.map((a) => `• ${a}`).join("\n")}`
-                  }
-                  style={{ gridColumnStart: day.col + 1, gridRowStart: day.row + 1 }}
-                  className={`aspect-square w-full rounded-sm ${LEVEL_CLASSES[levelForCount(day.count)]}`}
-                />
+                <Tooltip key={day.date}>
+                  <TooltipTrigger asChild>
+                    <div
+                      style={{ gridColumnStart: day.col + 1, gridRowStart: day.row + 1 }}
+                      className={`aspect-square w-full rounded-sm ${LEVEL_CLASSES[levelForCount(day.count)]}`}
+                    />
+                  </TooltipTrigger>
+                  {totalActivities > 0 && (
+                    <TooltipContent side="top" className="max-w-64">
+                      <p className="font-medium">{day.date}</p>
+                      {day.count === 0 ? (
+                        <p className="text-primary-foreground/70">No activity</p>
+                      ) : (
+                        <>
+                          <p className="text-primary-foreground/70">{day.count} total</p>
+                          <ul className="mt-1 space-y-0.5">
+                            {day.actions.map((a) => (
+                              <li key={a.action}>
+                                • {a.action}
+                                {a.count > 1 && <span className="text-primary-foreground/70"> ×{a.count}</span>}
+                              </li>
+                            ))}
+                          </ul>
+                        </>
+                      )}
+                    </TooltipContent>
+                  )}
+                </Tooltip>
               ))}
             </div>
           </div>

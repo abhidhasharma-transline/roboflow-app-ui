@@ -17,7 +17,7 @@ export function WorkspacePage() {
 
   function refetch() {
     setIsLoading(true)
-    Promise.all([listWorkspaces(), listMyInvitations()])
+    Promise.all([listWorkspaces({ mineOnly: true }), listMyInvitations()])
       .then(([ws, inv]) => {
         setWorkspaces(ws)
         setInvitations(inv)

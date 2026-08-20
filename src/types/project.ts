@@ -35,7 +35,14 @@ export interface ProjectMember {
   id: string
   user_id: string
   role: "admin" | "labeler" | "reviewer" | "super_admin"
+  // Redacted to null by the backend for any row that isn't the requester's
+  // own, unless the requester is super admin — never a peer's real overrides.
   permission_overrides: Record<string, boolean> | null
+  is_owner: boolean
+  // True when this member is a system-level super admin — their stored
+  // project role is a vestigial value that isn't actually consulted, since
+  // super admin bypasses every permission check outright.
+  is_super_admin: boolean
   email: string
   username: string
   first_name?: string

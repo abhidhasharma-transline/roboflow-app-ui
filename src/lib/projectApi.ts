@@ -26,6 +26,17 @@ export async function getProject(workspaceId: string, projectId: string): Promis
   return res.data
 }
 
+/** Not nested under a workspace — resolves which workspace a project actually
+ *  belongs to when the client doesn't know yet (or its guess is stale/wrong). */
+export async function resolveProjectWorkspace(
+  projectId: string
+): Promise<{ workspace_id: string; workspace_name: string }> {
+  const res = await api.get<{ workspace_id: string; workspace_name: string }>(
+    `/projects/${projectId}/workspace`
+  )
+  return res.data
+}
+
 /** Requires a backend PATCH /workspaces/{workspace_id}/projects/{project_id} endpoint. */
 export async function renameProject(
   workspaceId: string,
@@ -105,6 +116,29 @@ export async function updateProjectMember(
   const res = await api.patch<{ message: string }>(
     `${base(workspaceId)}/projects/${projectId}/members/${userId}`,
     payload
+  )
+  return res.data
+}
+
+export async function removeProjectMember(
+  workspaceId: string,
+  projectId: string,
+  userId: string
+): Promise<{ message: string }> {
+  const res = await api.delete<{ message: string }>(
+    `${base(workspaceId)}/projects/${projectId}/members/${userId}`
+  )
+  return res.data
+}
+
+export async function transferProjectOwner(
+  workspaceId: string,
+  projectId: string,
+  newOwnerId: string
+): Promise<{ message: string }> {
+  const res = await api.patch<{ message: string }>(
+    `${base(workspaceId)}/projects/${projectId}/owner`,
+    { new_owner_id: newOwnerId }
   )
   return res.data
 }

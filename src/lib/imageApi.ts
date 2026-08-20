@@ -38,6 +38,7 @@ export interface ProjectImageSummary {
   is_duplicate: boolean
   annotations: ProjectImageAnnotation[]
   tag_count: number
+  is_null: boolean
 }
 
 export async function listProjectImages(
@@ -79,6 +80,30 @@ export async function bulkSetSplit(
     image_ids: imageIds,
     split,
   })
+  return res.data
+}
+
+export async function markImagesNull(
+  workspaceId: string,
+  projectId: string,
+  imageIds: string[]
+): Promise<{ marked_null: number; annotations_removed: number }> {
+  const res = await api.post(`/workspaces/${workspaceId}/projects/${projectId}/images/mark-null`, {
+    image_ids: imageIds,
+  })
+  return res.data
+}
+
+export async function rebalanceSplit(
+  workspaceId: string,
+  projectId: string,
+  ratios: { train_percent: number; valid_percent: number; test_percent: number } = {
+    train_percent: 70,
+    valid_percent: 15,
+    test_percent: 15,
+  }
+): Promise<{ updated_images: number; train: number; valid: number; test: number }> {
+  const res = await api.post(`/workspaces/${workspaceId}/projects/${projectId}/images/rebalance-split`, ratios)
   return res.data
 }
 

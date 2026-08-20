@@ -107,7 +107,7 @@ export function ProjectsPage() {
           </div>
           <Button variant="outline" onClick={() => setInviteDialogOpen(true)}>
             <UserPlus className="size-4" />
-            Invite Team
+            Invite Team to Workspace
           </Button>
         </div>
       </div>

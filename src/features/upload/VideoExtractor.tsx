@@ -355,7 +355,7 @@ export function VideoExtractor({
 
               <div
                 ref={filmstripRef}
-                className="relative mt-2 flex h-16 overflow-hidden rounded-md border border-border bg-muted select-none"
+                className="relative mt-2 flex h-24 overflow-hidden rounded-md border border-border bg-muted select-none"
               >
                 {filmstripStatus === "loading" ? (
                   <div className="flex w-full items-center justify-center text-xs text-muted-foreground">
@@ -366,7 +366,7 @@ export function VideoExtractor({
                     Preview unavailable — use the player above and the controls below to pick frames.
                   </div>
                 ) : (
-                  <div className="flex w-full gap-px bg-border">
+                  <div className="flex w-full gap-px bg-black">
                     {filmstrip.map((src, i) => (
                       <img key={i} src={src} className="h-full flex-1 object-cover" alt="" />
                     ))}
@@ -399,20 +399,20 @@ export function VideoExtractor({
                         e.preventDefault()
                         setDraggingHandle("start")
                       }}
-                      className="absolute top-0 z-10 flex h-full w-3 -translate-x-1/2 cursor-ew-resize items-center justify-center rounded bg-brand"
+                      className="absolute top-0 z-10 flex h-full w-4 -translate-x-1/2 cursor-ew-resize items-center justify-center rounded-md bg-brand shadow-md ring-1 ring-white/40 hover:brightness-110"
                       style={{ left: `${(rangeStart / duration) * 100}%` }}
                     >
-                      <GripVertical className="size-3 text-brand-foreground" />
+                      <GripVertical className="size-3.5 text-brand-foreground" />
                     </div>
                     <div
                       onPointerDown={(e) => {
                         e.preventDefault()
                         setDraggingHandle("end")
                       }}
-                      className="absolute top-0 z-10 flex h-full w-3 -translate-x-1/2 cursor-ew-resize items-center justify-center rounded bg-brand"
+                      className="absolute top-0 z-10 flex h-full w-4 -translate-x-1/2 cursor-ew-resize items-center justify-center rounded-md bg-brand shadow-md ring-1 ring-white/40 hover:brightness-110"
                       style={{ left: `${(rangeEnd / duration) * 100}%` }}
                     >
-                      <GripVertical className="size-3 text-brand-foreground" />
+                      <GripVertical className="size-3.5 text-brand-foreground" />
                     </div>
                   </>
                 )}
@@ -437,7 +437,7 @@ export function VideoExtractor({
               {manualOpen && (
                 <div className="mt-3 rounded-lg border border-border p-3">
                   <p className="mb-2 text-sm font-semibold text-foreground">Select frames to upload</p>
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex flex-wrap items-center justify-center gap-2">
                     <Button
                       variant="outline"
                       size="sm"

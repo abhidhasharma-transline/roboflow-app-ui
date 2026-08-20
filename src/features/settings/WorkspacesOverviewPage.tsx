@@ -23,7 +23,9 @@ export function WorkspacesOverviewPage() {
       <div className="w-full max-w-[1600px]">
         <h1 className="mb-1 text-2xl font-semibold text-foreground">Workspaces</h1>
         <p className="mb-6 text-sm text-muted-foreground">
-          {isSuperAdmin ? "Every workspace on the platform." : "Workspaces you're a member of."}
+          {isSuperAdmin
+            ? "Every voluntarily-created workspace on the platform, plus your own."
+            : "Workspaces you're a member of."}
         </p>
 
         {isLoading ? (

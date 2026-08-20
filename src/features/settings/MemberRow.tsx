@@ -15,9 +15,19 @@ import { initials, roleLabel } from "@/lib/userDisplay"
 import { effectivePermissions, PERMISSION_KEYS, PERMISSION_LABELS, type PermissionKey } from "@/lib/permissions"
 import { getProjectColor } from "@/lib/projectColors"
 import { updateProjectMember, addProjectMember } from "@/lib/projectApi"
+import { useToastStore } from "@/stores/toastStore"
 import type { WorkspaceMember } from "@/types/workspace"
 import type { WorkspaceRole } from "@/types/auth"
 import type { Project } from "@/types/project"
+
+function extractErrorMessage(err: unknown): string {
+  if (typeof err === "object" && err !== null && "response" in err) {
+    const resp = (err as { response?: { data?: { detail?: unknown } } }).response
+    const detail = resp?.data?.detail
+    if (typeof detail === "string") return detail
+  }
+  return "Something went wrong — please try again."
+}
 
 export interface ProjectOverride {
   project: Project
@@ -57,6 +67,7 @@ export function MemberRow({
   const [isAdding, setIsAdding] = useState(false)
   const [addingProjectId, setAddingProjectId] = useState<string | null>(null)
   const [draftPermissions, setDraftPermissions] = useState<Record<PermissionKey, boolean> | null>(null)
+  const addToast = useToastStore((s) => s.addToast)
 
   function cancelAdd() {
     setIsAdding(false)
@@ -68,13 +79,18 @@ export function MemberRow({
   const availableToAdd = allProjects.filter((p) => !overriddenProjectIds.has(p.id))
 
   async function savePermissions(projectId: string, permissions: Record<string, boolean>, isNew: boolean) {
-    if (isNew) {
-      await addProjectMember(workspaceId, projectId, member.user_id, member.role, permissions)
-    } else {
-      await updateProjectMember(workspaceId, projectId, member.user_id, { permissions })
+    try {
+      if (isNew) {
+        await addProjectMember(workspaceId, projectId, member.user_id, member.role, permissions)
+      } else {
+        await updateProjectMember(workspaceId, projectId, member.user_id, { permissions })
+      }
+      cancelAdd()
+      onRefetchOverrides()
+    } catch (err) {
+      addToast({ variant: "error", title: "Couldn't update permission", description: extractErrorMessage(err) })
+      onRefetchOverrides()
     }
-    cancelAdd()
-    onRefetchOverrides()
   }
 
   return (

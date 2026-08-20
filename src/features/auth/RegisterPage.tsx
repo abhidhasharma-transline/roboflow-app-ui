@@ -41,7 +41,7 @@ export function RegisterPage() {
       })
 
       const { user, access_token } = await loginRequest({
-        email,
+        identifier: email,
         password,
       })
 

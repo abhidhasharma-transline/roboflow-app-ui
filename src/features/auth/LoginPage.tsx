@@ -15,7 +15,7 @@ export function LoginPage() {
 
   const login = useAuthStore((s) => s.login)
 
-  const [email, setEmail] = useState("")
+  const [identifier, setIdentifier] = useState("")
   const [password, setPassword] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -28,7 +28,7 @@ export function LoginPage() {
 
     try {
       const { user, access_token } = await loginRequest({
-        email,
+        identifier,
         password,
       })
 
@@ -72,14 +72,14 @@ export function LoginPage() {
 
             <div className="space-y-1.5">
               <Label className="text-xs text-zinc-300">
-                Email
+                Email or Username
               </Label>
 
               <Input
-                type="email"
-                placeholder="you@company.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                type="text"
+                placeholder="you@company.com or username"
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
                 className="
                   h-9
                   text-sm
@@ -190,5 +190,5 @@ function extractErrorMessage(err: unknown): string {
     if (typeof detail === "string") return detail
   }
 
-  return "Invalid email or password."
+  return "Invalid email/username or password."
 }

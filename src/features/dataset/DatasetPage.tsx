@@ -42,7 +42,7 @@ import { TagInput } from "@/components/shared/TagInput"
 import { useWorkspaceStore } from "@/stores/workspaceStore"
 import { useToastStore } from "@/stores/toastStore"
 import { useProject } from "@/hooks/useProjects"
-import { listProjectImages, bulkSetSplit, type ProjectImageSummary } from "@/lib/imageApi"
+import { listProjectImages, bulkSetSplit, markImagesNull, type ProjectImageSummary } from "@/lib/imageApi"
 import { removeImageFromProject } from "@/lib/commentApi"
 import { listClasses, type ProjectClass } from "@/lib/classApi"
 import { listTags, bulkApplyTags, bulkApplyMetadata, type ImageTag } from "@/lib/tagApi"
@@ -103,6 +103,15 @@ function SplitBadge({ split }: { split: string | null }) {
   )
 }
 
+function NullBadge() {
+  return (
+    <span className="absolute top-1.5 left-1.5 flex items-center gap-1 rounded-full bg-slate-600 px-2 py-0.5 text-[10px] font-medium text-white shadow-sm">
+      <Ban className="size-2.5" />
+      Null
+    </span>
+  )
+}
+
 export function DatasetPage() {
   const { projectId } = useParams()
   const workspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
@@ -140,6 +149,7 @@ export function DatasetPage() {
   const [exportDialogOpen, setExportDialogOpen] = useState(false)
 
   const [deletingSelected, setDeletingSelected] = useState(false)
+  const [markingNull, setMarkingNull] = useState(false)
 
   function refetch() {
     if (!workspaceId || !projectId) return
@@ -272,6 +282,25 @@ export function DatasetPage() {
     }
   }
 
+  async function handleMarkNull() {
+    if (!workspaceId || !projectId || selectedIds.length === 0 || markingNull) return
+    setMarkingNull(true)
+    try {
+      const res = await markImagesNull(workspaceId, projectId, selectedIds)
+      addToast({
+        variant: "success",
+        title: "Marked as null",
+        description: `${res.marked_null} image(s) · ${res.annotations_removed} annotation(s) cleared`,
+      })
+      setSelectedIds([])
+      refetch()
+    } catch {
+      addToast({ variant: "error", title: "Couldn't mark images null", description: "Please try again." })
+    } finally {
+      setMarkingNull(false)
+    }
+  }
+
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
   return (
@@ -401,6 +430,7 @@ export function DatasetPage() {
                       className="absolute right-1.5 top-1.5 z-10 bg-background/90 shadow-sm data-[state=unchecked]:opacity-0 group-hover:data-[state=unchecked]:opacity-100"
                     />
                     <SplitBadge split={img.split} />
+                    {img.is_null && <NullBadge />}
                   </div>
                   <p className="truncate text-xs text-muted-foreground" title={img.filename}>
                     {img.filename}
@@ -486,6 +516,12 @@ export function DatasetPage() {
                           {badge.label}
                         </span>
                       )}
+                      {img.is_null && (
+                        <span className="flex items-center gap-1 rounded-full bg-slate-600 px-2 py-0.5 text-[10px] font-medium text-white">
+                          <Ban className="size-2.5" />
+                          Null
+                        </span>
+                      )}
                     </p>
                   </div>
                 </div>
@@ -509,9 +545,15 @@ export function DatasetPage() {
               <UserPlus className="size-3.5" />
               Assign for Labeling
             </Button>
-            <Button variant="outline" size="sm" disabled title="Coming soon — negative-sample workflow not built yet">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleMarkNull}
+              disabled={selectedIds.length === 0 || markingNull}
+              title="Confirms these images have nothing to detect — clears their annotations and includes them as background examples"
+            >
               <Ban className="size-3.5" />
-              Mark Null
+              {markingNull ? "Marking…" : "Mark Null"}
             </Button>
             <Button variant="outline" size="sm" onClick={() => setSplitDialogOpen(true)} disabled={selectedIds.length === 0}>
               <SplitSquareHorizontal className="size-3.5" />

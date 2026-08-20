@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { useParams, Link, useNavigate } from "react-router-dom"
+import { useParams, Link, useNavigate, useLocation } from "react-router-dom"
 import { GuardedNavLink as NavLink } from "./GuardedNavLink"
 import {
   ArrowLeft,
@@ -18,6 +18,7 @@ import {
   Copy,
   Pencil,
   Trash2,
+  Users,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import {
@@ -54,6 +55,7 @@ interface SubNavItem {
 export function ProjectSidebar() {
   const { projectId } = useParams()
   const navigate = useNavigate()
+  const location = useLocation()
   const workspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   const { project, refetch } = useProject(projectId)
   const { name: workspaceName } = useActiveWorkspace()
@@ -61,12 +63,16 @@ export function ProjectSidebar() {
   const [modelsOpen, setModelsOpen] = useState(true)
   const [datasetCount, setDatasetCount] = useState<number | undefined>(undefined)
 
+  // The sidebar stays mounted across every page in a project, so this can't
+  // just fetch once on mount — it'd go stale the moment a dataset-changing
+  // action happens on whatever page you're on (add-to-dataset, assign for
+  // labeling, mark null, delete...). Re-run on every navigation instead.
   useEffect(() => {
     if (!workspaceId || !projectId) return
     listProjectImages(workspaceId, projectId, { status: "dataset", limit: 1 })
       .then((res) => setDatasetCount(res.total))
       .catch(() => setDatasetCount(undefined))
-  }, [workspaceId, projectId])
+  }, [workspaceId, projectId, location.key])
 
   const [renameOpen, setRenameOpen] = useState(false)
   const [renameValue, setRenameValue] = useState("")
@@ -121,9 +127,10 @@ export function ProjectSidebar() {
       path: `/projects/${projectId}/dataset`,
       badge: datasetCount,
     },
-    { label: "Versions", icon: Layers, disabled: true },
+    { label: "Versions", icon: Layers, path: `/projects/${projectId}/versions` },
     { label: "Analytics", icon: HeartPulse, disabled: true },
     { label: "Classes & Tags", icon: Tags, path: `/projects/${projectId}/classes` },
+    { label: "Team", icon: Users, path: `/projects/${projectId}/team` },
   ]
 
   const modelItems: SubNavItem[] = [
