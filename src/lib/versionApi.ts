@@ -45,6 +45,7 @@ export interface VersionImageSummary {
   id: string
   filename: string
   thumbnail_url: string | null
+  image_url: string | null
   split: "train" | "valid" | "test"
   annotations: VersionImageAnnotation[]
 }

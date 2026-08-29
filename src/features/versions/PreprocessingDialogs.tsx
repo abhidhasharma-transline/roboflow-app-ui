@@ -77,7 +77,7 @@ export function AutoOrientDialog({
                 </div>
               ))}
             </div>
-            <p className="mt-2 text-xs text-muted-foreground">(A live preview is not available for this action.)</p>
+            {/* <p className="mt-2 text-xs text-muted-foreground">(A live preview is not available for this action.)</p> */}
           </div>
           <div className="w-56 space-y-4">
             <p className="text-sm text-foreground">Discard EXIF rotations and standardize pixel ordering.</p>
@@ -124,6 +124,23 @@ export function ResizeDialog({
   const [mode, setMode] = useState<ResizeMode>(initialMode)
   const [width, setWidth] = useState(initialWidth)
   const [height, setHeight] = useState(initialHeight)
+  // Separate "what's on screen while typing" from the committed number that
+  // drives the preview's aspect-ratio. Digit-by-digit edits (e.g. clearing
+  // "640" to type "512") pass through momentary states like "6" or "" —
+  // feeding those straight into aspectRatio produced a near-zero ratio,
+  // which blew the preview box up to a huge sliver (unbounded CSS
+  // aspect-ratio height) instead of just looking odd for a frame.
+  const [widthInput, setWidthInput] = useState(String(initialWidth))
+  const [heightInput, setHeightInput] = useState(String(initialHeight))
+
+  function commitWidth(raw: string) {
+    const n = Number(raw)
+    if (raw.trim() !== "" && Number.isFinite(n) && n >= 32) setWidth(n)
+  }
+  function commitHeight(raw: string) {
+    const n = Number(raw)
+    if (raw.trim() !== "" && Number.isFinite(n) && n >= 32) setHeight(n)
+  }
 
   const objectFit = mode === "stretch" ? "fill" : mode === "fill_center_crop" ? "cover" : "contain"
   const previewBg =
@@ -169,16 +186,24 @@ export function ResizeDialog({
               <Input
                 type="number"
                 min={32}
-                value={width}
-                onChange={(e) => setWidth(Number(e.target.value) || 1)}
+                value={widthInput}
+                onChange={(e) => {
+                  setWidthInput(e.target.value)
+                  commitWidth(e.target.value)
+                }}
+                onBlur={() => setWidthInput(String(width))}
                 className="h-9"
               />
               <span className="text-sm text-muted-foreground">×</span>
               <Input
                 type="number"
                 min={32}
-                value={height}
-                onChange={(e) => setHeight(Number(e.target.value) || 1)}
+                value={heightInput}
+                onChange={(e) => {
+                  setHeightInput(e.target.value)
+                  commitHeight(e.target.value)
+                }}
+                onBlur={() => setHeightInput(String(height))}
                 className="h-9"
               />
             </div>

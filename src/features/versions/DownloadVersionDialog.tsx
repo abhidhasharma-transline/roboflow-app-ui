@@ -25,7 +25,7 @@ export function DownloadVersionDialog({
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onDownload: () => void
+  onDownload: (format: string) => void
   downloading: boolean
 }) {
   const [format, setFormat] = useState(YOLO_FORMATS[2])
@@ -104,7 +104,7 @@ export function DownloadVersionDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={downloading}>
             Cancel
           </Button>
-          <Button variant="brand" onClick={onDownload} disabled={downloading}>
+          <Button variant="brand" onClick={() => onDownload(format)} disabled={downloading}>
             {downloading ? "Preparing…" : "Continue"}
           </Button>
         </div>

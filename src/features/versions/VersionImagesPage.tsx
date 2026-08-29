@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
-import { ImageIcon, ArrowLeft, User } from "lucide-react"
+import { ImageIcon, ArrowLeft, User, Maximize2, X, ChevronLeft, ChevronRight } from "lucide-react"
+import { Dialog, DialogContent } from "@/components/ui/dialog"
 import { useWorkspaceStore } from "@/stores/workspaceStore"
 import { listVersions, getVersionImages, type ProjectVersion, type VersionImageSummary } from "@/lib/versionApi"
 
@@ -57,6 +58,7 @@ export function VersionImagesPage() {
   const [images, setImages] = useState<VersionImageSummary[]>([])
   const [loadingImages, setLoadingImages] = useState(true)
   const [activeTab, setActiveTab] = useState<(typeof SPLIT_TABS)[number]>("train")
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null)
 
   useEffect(() => {
     if (!workspaceId || !projectId) return
@@ -187,13 +189,20 @@ export function VersionImagesPage() {
               <p className="py-8 text-sm text-muted-foreground">No images in this split.</p>
             ) : (
               <div className="grid grid-cols-4 gap-4 pb-5 sm:grid-cols-6 lg:grid-cols-8">
-                {filteredImages.map((img) => (
-                  <div key={img.id} className="relative aspect-square overflow-hidden rounded-md bg-muted">
+                {filteredImages.map((img, index) => (
+                  <button
+                    key={img.id}
+                    onClick={() => setPreviewIndex(index)}
+                    className="group relative aspect-square overflow-hidden rounded-md bg-muted"
+                  >
                     {img.thumbnail_url && (
                       <img src={img.thumbnail_url} alt={img.filename} className="size-full object-cover" />
                     )}
                     <ThumbAnnotations img={img} />
-                  </div>
+                    <span className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition-colors group-hover:bg-black/30 group-hover:opacity-100">
+                      <Maximize2 className="size-5 text-white" />
+                    </span>
+                  </button>
                 ))}
               </div>
             )}
@@ -203,6 +212,66 @@ export function VersionImagesPage() {
           </div>
         </div>
       </div>
+
+      <Dialog open={previewIndex !== null} onOpenChange={(v) => !v && setPreviewIndex(null)}>
+        <DialogContent
+          showCloseButton={false}
+          className="max-w-5xl gap-0 border-none bg-transparent p-0 shadow-none"
+        >
+          {previewIndex !== null && filteredImages[previewIndex] && (
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center justify-between text-sm text-white">
+                <p className="truncate font-medium">{filteredImages[previewIndex].filename}</p>
+                <button
+                  onClick={() => setPreviewIndex(null)}
+                  className="flex size-7 items-center justify-center rounded-md hover:bg-white/10"
+                >
+                  <X className="size-4" />
+                </button>
+              </div>
+
+              <div className="relative flex items-center justify-center">
+                {previewIndex > 0 && (
+                  <button
+                    onClick={() => setPreviewIndex((i) => (i !== null ? i - 1 : i))}
+                    className="absolute left-2 z-10 flex size-9 items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70"
+                  >
+                    <ChevronLeft className="size-5" />
+                  </button>
+                )}
+
+                <div className="relative max-h-[80vh] overflow-hidden rounded-lg bg-black">
+                  {filteredImages[previewIndex].image_url ? (
+                    <img
+                      src={filteredImages[previewIndex].image_url ?? undefined}
+                      alt={filteredImages[previewIndex].filename}
+                      className="max-h-[80vh] max-w-full object-contain"
+                    />
+                  ) : (
+                    <div className="flex h-64 w-96 items-center justify-center text-sm text-muted-foreground">
+                      Preview unavailable
+                    </div>
+                  )}
+                  <ThumbAnnotations img={filteredImages[previewIndex]} />
+                </div>
+
+                {previewIndex < filteredImages.length - 1 && (
+                  <button
+                    onClick={() => setPreviewIndex((i) => (i !== null ? i + 1 : i))}
+                    className="absolute right-2 z-10 flex size-9 items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70"
+                  >
+                    <ChevronRight className="size-5" />
+                  </button>
+                )}
+              </div>
+
+              <p className="text-center text-xs text-white/70">
+                {previewIndex + 1} of {filteredImages.length}
+              </p>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

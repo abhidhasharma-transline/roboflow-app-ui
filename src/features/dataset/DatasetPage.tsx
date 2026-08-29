@@ -20,6 +20,8 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronDown,
+  Maximize2,
+  X,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -131,6 +133,7 @@ export function DatasetPage() {
   const [page, setPage] = useState(0)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [expandedRowIds, setExpandedRowIds] = useState<string[]>([])
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null)
 
   const [classes, setClasses] = useState<ProjectClass[]>([])
   const [tags, setTags] = useState<ImageTag[]>([])
@@ -405,7 +408,7 @@ export function DatasetPage() {
           </p>
         ) : viewMode === "grid" ? (
           <div className="grid grid-cols-2 gap-4 pb-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
-            {images.map((img) => {
+            {images.map((img, index) => {
               const selected = selectedIds.includes(img.id)
               return (
                 <div key={img.id} className="group relative flex flex-col gap-1.5">
@@ -423,6 +426,16 @@ export function DatasetPage() {
                       </div>
                     )}
                     {showAnnotations && <AnnotationOverlay img={img} />}
+                    <button
+                      title="View full size"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setPreviewIndex(index)
+                      }}
+                      className="absolute left-1.5 top-1.5 z-10 flex size-6 items-center justify-center rounded-md bg-background/90 text-foreground opacity-0 shadow-sm hover:bg-accent group-hover:opacity-100"
+                    >
+                      <Maximize2 className="size-3.5" />
+                    </button>
                     <Checkbox
                       checked={selected}
                       onCheckedChange={() => toggleSelect(img.id)}
@@ -441,7 +454,7 @@ export function DatasetPage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-x-8 gap-y-3 pb-4 lg:grid-cols-2">
-            {images.map((img) => {
+            {images.map((img, index) => {
               const selected = selectedIds.includes(img.id)
               const badge = img.split ? SPLIT_BADGE[img.split] : null
               const uniqueClasses = Array.from(
@@ -462,12 +475,22 @@ export function DatasetPage() {
                     onClick={(e) => e.stopPropagation()}
                     className="mt-0.5 shrink-0"
                   />
-                  <div className="relative size-16 shrink-0 overflow-hidden rounded bg-muted">
+                  <button
+                    title="View full size"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setPreviewIndex(index)
+                    }}
+                    className="group relative size-16 shrink-0 overflow-hidden rounded bg-muted"
+                  >
                     {img.thumbnail_url && (
                       <img src={img.thumbnail_url} alt={img.filename} className="size-full object-cover" />
                     )}
                     {showAnnotations && <AnnotationOverlay img={img} />}
-                  </div>
+                    <span className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition-colors group-hover:bg-black/30 group-hover:opacity-100">
+                      <Maximize2 className="size-4 text-white" />
+                    </span>
+                  </button>
                   <div className="min-w-0 flex-1 space-y-1 text-xs">
                     <p className="truncate">
                       <span className="font-semibold tracking-wide text-muted-foreground uppercase">Filename:</span>{" "}
@@ -752,10 +775,71 @@ export function DatasetPage() {
         />
       )}
 
+      <Dialog open={previewIndex !== null} onOpenChange={(v) => !v && setPreviewIndex(null)}>
+        <DialogContent
+          showCloseButton={false}
+          className="max-w-5xl gap-0 border-none bg-transparent p-0 shadow-none"
+        >
+          {previewIndex !== null && images[previewIndex] && (
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center justify-between text-sm text-white">
+                <p className="truncate font-medium">{images[previewIndex].filename}</p>
+                <button
+                  onClick={() => setPreviewIndex(null)}
+                  className="flex size-7 items-center justify-center rounded-md hover:bg-white/10"
+                >
+                  <X className="size-4" />
+                </button>
+              </div>
+
+              <div className="relative flex items-center justify-center">
+                {previewIndex > 0 && (
+                  <button
+                    onClick={() => setPreviewIndex((i) => (i !== null ? i - 1 : i))}
+                    className="absolute left-2 z-10 flex size-9 items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70"
+                  >
+                    <ChevronLeft className="size-5" />
+                  </button>
+                )}
+
+                <div className="relative max-h-[80vh] overflow-hidden rounded-lg bg-black">
+                  {images[previewIndex].image_url ? (
+                    <img
+                      src={images[previewIndex].image_url ?? undefined}
+                      alt={images[previewIndex].filename}
+                      className="max-h-[80vh] max-w-full object-contain"
+                    />
+                  ) : (
+                    <div className="flex h-64 w-96 items-center justify-center text-sm text-muted-foreground">
+                      Preview unavailable
+                    </div>
+                  )}
+                  {showAnnotations && <AnnotationOverlay img={images[previewIndex]} />}
+                </div>
+
+                {previewIndex < images.length - 1 && (
+                  <button
+                    onClick={() => setPreviewIndex((i) => (i !== null ? i + 1 : i))}
+                    className="absolute right-2 z-10 flex size-9 items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70"
+                  >
+                    <ChevronRight className="size-5" />
+                  </button>
+                )}
+              </div>
+
+              <p className="text-center text-xs text-white/70">
+                {previewIndex + 1} of {images.length}
+              </p>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
       {workspaceId && projectId && (
         <ExportDatasetDialog
           workspaceId={workspaceId}
           projectId={projectId}
+          projectName={project?.name ?? "dataset"}
           annotationType={project?.annotation_type ?? "object_detection"}
           classCount={classes.length}
           open={exportDialogOpen}

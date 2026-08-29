@@ -228,6 +228,7 @@ export function VersionsPage() {
         <VersionDetailView
           workspaceId={workspaceId}
           projectId={projectId}
+          projectName={project?.name ?? "dataset"}
           version={selectedVersion}
           annotationType={project?.annotation_type ?? "object_detection"}
           onRenamed={(updated) => {

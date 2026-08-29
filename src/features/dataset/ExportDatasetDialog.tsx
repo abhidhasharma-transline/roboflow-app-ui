@@ -23,6 +23,7 @@ import {
 import { useToastStore } from "@/stores/toastStore"
 import { listProjectImages } from "@/lib/imageApi"
 import { exportDatasetYolo } from "@/lib/exportApi"
+import { exportFilename } from "@/lib/utils"
 import type { ProjectAnnotationType } from "@/types/project"
 
 const YOLO_FORMATS = ["YOLOv8", "YOLOv9", "YOLOv11", "YOLOv12", "YOLO26"]
@@ -37,6 +38,7 @@ function annotationTypeLabel(type: ProjectAnnotationType) {
 export function ExportDatasetDialog({
   workspaceId,
   projectId,
+  projectName,
   annotationType,
   classCount,
   open,
@@ -44,6 +46,7 @@ export function ExportDatasetDialog({
 }: {
   workspaceId: string
   projectId: string
+  projectName: string
   annotationType: ProjectAnnotationType
   classCount: number
   open: boolean
@@ -83,14 +86,15 @@ export function ExportDatasetDialog({
     setDownloading(true)
     try {
       const blob = await exportDatasetYolo(workspaceId, projectId)
-      triggerBlobDownload(blob, "dataset_export.zip")
+      const filename = exportFilename([projectName, format.toLowerCase()], "zip")
+      triggerBlobDownload(blob, filename)
       onOpenChange(false)
       addToast({
         variant: "success",
         title: "Dataset export ready",
         description: `${total} image${total !== 1 ? "s" : ""} · ${format}`,
         actionLabel: "Download",
-        onAction: () => triggerBlobDownload(blob, "dataset_export.zip"),
+        onAction: () => triggerBlobDownload(blob, filename),
       })
     } catch {
       addToast({ variant: "error", title: "Export failed", description: "Please try again." })

@@ -31,6 +31,7 @@ export interface ProjectImageSummary {
   id: string
   filename: string
   thumbnail_url: string | null
+  image_url: string | null
   status: string
   split: "train" | "valid" | "test" | null
   width: number | null

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import {
   ArrowLeft,
@@ -47,6 +48,8 @@ import {
   FolderMinus,
   RefreshCcw,
   ScanSearch,
+  ArrowUp,
+  AtSign,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -81,6 +84,9 @@ import {
   removeImageFromProject, setAsCoverPhoto, addImageToDataset, sendImageToUnannotated,
   type ImageComment, type ImageHistoryEntry,
 } from "@/lib/commentApi"
+import { listProjectMembers } from "@/lib/projectApi"
+import { fullName, initials } from "@/lib/userDisplay"
+import type { ProjectMember } from "@/types/project"
 import type { JobImageSummary } from "@/types/job"
 import type { Annotation, BoundingBox, Point } from "@/types/annotation"
 
@@ -216,11 +222,11 @@ function AnnotationBoxOverlay({
           {lockedBy!.userName} editing…
         </span>
       )}
-      {selectable && (
+      {selectable && !lockedByOther && (
         <button
           onClick={onDelete}
-          disabled={lockedByOther || deleting}
-          title={lockedByOther ? `Locked by ${lockedBy!.userName}` : "Delete"}
+          disabled={deleting}
+          title="Delete"
           className="absolute -top-5 right-0 hidden rounded bg-black/60 p-0.5 text-white group-hover:block disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Trash2 className="size-3" />
@@ -240,6 +246,16 @@ function AnnotationBoxOverlay({
         ))}
     </div>
   )
+}
+
+/** True while focus is in any text-entry field — inputs AND textareas (the
+ *  comment box is a textarea, which `tagName === "INPUT"` alone never
+ *  matches), plus contentEditable elements. Every global keyboard shortcut
+ *  below must check this first, or things like Space/Backspace/Ctrl+Z leak
+ *  through while the user is just typing a comment. */
+function isTypingInField(): boolean {
+  const el = document.activeElement as HTMLElement | null
+  return el?.tagName === "INPUT" || el?.tagName === "TEXTAREA" || !!el?.isContentEditable
 }
 
 export function AnnotationToolPage() {
@@ -277,6 +293,9 @@ export function AnnotationToolPage() {
   const [commentDraft, setCommentDraft] = useState("")
   const [savingComment, setSavingComment] = useState(false)
   const [openCommentId, setOpenCommentId] = useState<string | null>(null)
+  const [projectMembers, setProjectMembers] = useState<ProjectMember[]>([])
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null)
+  const commentTextareaRef = useRef<HTMLTextAreaElement>(null)
 
   const [historyEntries, setHistoryEntries] = useState<ImageHistoryEntry[]>([])
   const [loadingHistory, setLoadingHistory] = useState(false)
@@ -349,6 +368,14 @@ export function AnnotationToolPage() {
   const [dragMode, setDragMode] = useState<DragMode | null>(null)
   const [resizeOverride, setResizeOverride] = useState<{ id: string; bbox: BoundingBox } | null>(null)
 
+  // Floating position for the Annotation Editor card — anchored to whatever
+  // shape is actually being edited instead of living in a fixed sidebar
+  // slot, so there's no round trip back to a corner of the screen every
+  // time you draw or select a box.
+  const EDITOR_WIDTH = 288
+  const EDITOR_MARGIN = 12
+  const [editorPos, setEditorPos] = useState<{ left: number; top: number } | null>(null)
+
   const [hoverViewportPos, setHoverViewportPos] = useState<Point | null>(null)
   const [spaceHeld, setSpaceHeld] = useState(false)
   const [isPanning, setIsPanning] = useState(false)
@@ -373,6 +400,33 @@ export function AnnotationToolPage() {
 
   const currentImage = images[currentIndex]
   const isInDataset = currentImage?.status === "dataset"
+
+  // The canvas box used to be a fixed 800x560 (10:7) regardless of the
+  // actual image's aspect ratio, so `object-cover` silently cropped
+  // whatever didn't fit (e.g. a real 1920x1080 / 16:9 frame lost ~20% off
+  // the top and bottom). Every box drawn was then a percentage of that
+  // CROPPED view, not the full stored image — correct on this canvas, but
+  // visibly wrong wherever else the same coordinates get rendered against
+  // the uncropped original (Dataset grid/lightbox, exports, versions).
+  // Sizing the box to the image's own aspect ratio removes the crop
+  // entirely, so "percent of canvas" and "percent of the real image" are
+  // finally the same number.
+  const [imageAspect, setImageAspect] = useState<number | null>(null)
+  useEffect(() => {
+    setImageAspect(null)
+  }, [currentImage?.id])
+  const CANVAS_MAX_WIDTH = 900
+  const CANVAS_MAX_HEIGHT = 700
+  const canvasBoxSize = useMemo(() => {
+    const aspect = imageAspect ?? 800 / 560
+    let width = CANVAS_MAX_WIDTH
+    let height = width / aspect
+    if (height > CANVAS_MAX_HEIGHT) {
+      height = CANVAS_MAX_HEIGHT
+      width = height * aspect
+    }
+    return { width, height }
+  }, [imageAspect])
 
   const { remoteDrafts, locks, sendDragPreview, acquireLock, releaseLock } = useAnnotationSocket(
     workspaceId ?? undefined,
@@ -430,6 +484,12 @@ export function AnnotationToolPage() {
     listComments(workspaceId, projectId, currentImage.id).then(setComments)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId, projectId, currentImage?.id])
+
+  // Loaded once (not re-fetched per comment) — the @mention list.
+  useEffect(() => {
+    if (!workspaceId || !projectId) return
+    listProjectMembers(workspaceId, projectId).then(setProjectMembers).catch(() => {})
+  }, [workspaceId, projectId])
 
   useEffect(() => {
     if (!workspaceId || !projectId || !currentImage || activeLeftNav !== "history") return
@@ -493,10 +553,47 @@ export function AnnotationToolPage() {
       setComments((prev) => [...prev, comment])
       setPendingComment(null)
       setCommentDraft("")
+      setMentionQuery(null)
     } finally {
       setSavingComment(false)
     }
   }
+
+  // Matches an "@partial" run right before the cursor — not preceded by a
+  // non-space character, so "user@x.com" doesn't trigger it mid-word.
+  const MENTION_PATTERN = /(?:^|\s)@([\w.]*)$/
+
+  function handleCommentDraftChange(value: string, cursor: number) {
+    setCommentDraft(value)
+    const match = value.slice(0, cursor).match(MENTION_PATTERN)
+    setMentionQuery(match ? match[1] : null)
+  }
+
+  function insertMention(member: ProjectMember) {
+    const el = commentTextareaRef.current
+    const cursor = el?.selectionStart ?? commentDraft.length
+    const uptoCursor = commentDraft.slice(0, cursor)
+    const match = uptoCursor.match(MENTION_PATTERN)
+    if (!match) return
+    const mentionStart = cursor - match[0].length + (match[0].startsWith(" ") ? 1 : 0)
+    const inserted = `@${member.username} `
+    const newValue = commentDraft.slice(0, mentionStart) + inserted + commentDraft.slice(cursor)
+    setCommentDraft(newValue)
+    setMentionQuery(null)
+    requestAnimationFrame(() => {
+      const pos = mentionStart + inserted.length
+      el?.focus()
+      el?.setSelectionRange(pos, pos)
+    })
+  }
+
+  const filteredMentionMembers = useMemo(() => {
+    if (mentionQuery === null) return []
+    const q = mentionQuery.toLowerCase()
+    return projectMembers.filter(
+      (m) => m.username.toLowerCase().includes(q) || fullName(m).toLowerCase().includes(q)
+    )
+  }, [mentionQuery, projectMembers])
 
   async function handleDeleteComment(commentId: string) {
     if (!workspaceId || !projectId || !currentImage) return
@@ -568,7 +665,7 @@ export function AnnotationToolPage() {
         (pendingShape || editingAnnotationId) &&
         e.key >= "1" &&
         e.key <= "9" &&
-        document.activeElement?.tagName !== "INPUT"
+        !isTypingInField()
       ) {
         const filtered = classes.filter((c) =>
           c.name.toLowerCase().includes(pendingClassName.trim().toLowerCase())
@@ -588,7 +685,7 @@ export function AnnotationToolPage() {
   // the toolbar buttons — most people reach for these before the icons.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if (!(e.ctrlKey || e.metaKey) || document.activeElement?.tagName === "INPUT" || shortcutsOpen) return
+      if (!(e.ctrlKey || e.metaKey) || isTypingInField() || shortcutsOpen) return
       if (e.key.toLowerCase() === "z" && !e.shiftKey) {
         e.preventDefault()
         handleUndo()
@@ -606,7 +703,7 @@ export function AnnotationToolPage() {
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.ctrlKey || e.metaKey || e.altKey) return
-      if (document.activeElement?.tagName === "INPUT" || shortcutsOpen) return
+      if (isTypingInField() || shortcutsOpen) return
       if (e.key.toLowerCase() === "r") {
         e.preventDefault()
         handleRepeatPrevious()
@@ -620,7 +717,7 @@ export function AnnotationToolPage() {
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.ctrlKey || e.metaKey || e.altKey) return
-      if (document.activeElement?.tagName === "INPUT" || shortcutsOpen) return
+      if (isTypingInField() || shortcutsOpen) return
       const key = e.key.toLowerCase()
       if (key === "b") setActiveTool("bbox")
       else if (key === "p") setActiveTool("polygon")
@@ -642,7 +739,7 @@ export function AnnotationToolPage() {
   // With an annotation selected or being edited: cycle classes, delete, copy/paste.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if (document.activeElement?.tagName === "INPUT" || shortcutsOpen) return
+      if (isTypingInField() || shortcutsOpen) return
 
       if ((pendingShape || editingAnnotationId) && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
         e.preventDefault()
@@ -708,7 +805,7 @@ export function AnnotationToolPage() {
   // Space-held → pan mode (grab cursor + drag-to-scroll), same as Figma/Photoshop.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if (e.code === "Space" && document.activeElement?.tagName !== "INPUT" && !shortcutsOpen) {
+      if (e.code === "Space" && !isTypingInField() && !shortcutsOpen) {
         e.preventDefault()
         setSpaceHeld(true)
       }
@@ -844,6 +941,63 @@ export function AnnotationToolPage() {
       y: ((e.clientY - rect.top) / rect.height) * 100,
     }
   }
+
+  /** Percent-of-canvas bounding box of whichever shape the editor is
+   *  currently open for — a freshly drawn one, or an existing annotation
+   *  being edited (resize-in-progress override taking priority so the
+   *  editor tracks a live drag, not last commit's position). */
+  function getActiveShapeBBoxPercent(): BoundingBox | null {
+    if (pendingShape) {
+      if (pendingShape.shapeType === "bbox") return pendingShape.geometry
+      const pts = pendingShape.geometry.points
+      if (!pts.length) return null
+      const xs = pts.map((p) => p.x)
+      const ys = pts.map((p) => p.y)
+      const x = Math.min(...xs)
+      const y = Math.min(...ys)
+      return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y }
+    }
+    if (editingAnnotationId) {
+      if (resizeOverride?.id === editingAnnotationId) return resizeOverride.bbox
+      const ann = annotations.find((a) => a.id === editingAnnotationId)
+      if (!ann) return null
+      if (ann.bbox) return ann.bbox
+      if (ann.polygon?.length) {
+        const xs = ann.polygon.map((p) => p.x)
+        const ys = ann.polygon.map((p) => p.y)
+        const x = Math.min(...xs)
+        const y = Math.min(...ys)
+        return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y }
+      }
+    }
+    return null
+  }
+
+  // Recomputed synchronously after layout (not a plain effect) so the
+  // popup doesn't visibly lag a frame behind the shape while dragging/
+  // resizing or panning/zooming the canvas.
+  useLayoutEffect(() => {
+    const box = getActiveShapeBBoxPercent()
+    const canvasEl = canvasRef.current
+    if (!box || !canvasEl) {
+      setEditorPos(null)
+      return
+    }
+    const rect = canvasEl.getBoundingClientRect()
+    const shapeRight = rect.left + ((box.x + box.width) / 100) * rect.width
+    const shapeLeft = rect.left + (box.x / 100) * rect.width
+    const shapeTop = rect.top + (box.y / 100) * rect.height
+
+    // Prefer opening to the right of the shape; flip to the left if there's
+    // not enough room on the right but there is on the left.
+    const spaceRight = window.innerWidth - shapeRight
+    const placeLeft = spaceRight < EDITOR_WIDTH + EDITOR_MARGIN && shapeLeft > EDITOR_WIDTH + EDITOR_MARGIN
+    const rawLeft = placeLeft ? shapeLeft - EDITOR_WIDTH - EDITOR_MARGIN : shapeRight + EDITOR_MARGIN
+    const left = Math.max(8, Math.min(rawLeft, window.innerWidth - EDITOR_WIDTH - 8))
+    const top = Math.max(8, Math.min(shapeTop, window.innerHeight - 8))
+    setEditorPos({ left, top })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingShape, editingAnnotationId, annotations, resizeOverride, zoom, pan.x, pan.y])
 
   function startPan(e: React.MouseEvent) {
     panStartRef.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y }
@@ -1914,8 +2068,11 @@ export function AnnotationToolPage() {
             </span>
           </div>
 
-          {(pendingShape || editingAnnotationId) && (
-            <div className="mb-4 shrink-0 overflow-hidden rounded-lg border border-brand/40 bg-brand/5">
+          {(pendingShape || editingAnnotationId) && editorPos && createPortal(
+            <div
+              style={{ position: "fixed", left: editorPos.left, top: editorPos.top, width: EDITOR_WIDTH }}
+              className="z-40 max-h-[80vh] overflow-y-auto rounded-lg border border-brand/40 bg-popover shadow-xl"
+            >
               <div className="flex items-center justify-between border-b border-brand/20 px-3 py-2">
                 <p className="text-xs font-semibold text-foreground">Annotation Editor</p>
                 <div className="flex items-center gap-2">
@@ -1953,6 +2110,24 @@ export function AnnotationToolPage() {
                     if (e.key === "Escape") {
                       if (pendingShape) handleDiscardPendingShape()
                       else closeAnnotationEditor()
+                    }
+                    // This box auto-focuses the instant the editor opens, so
+                    // the page-level Backspace/Delete shortcut (which
+                    // deliberately backs off while any <input> is focused,
+                    // so it doesn't eat keystrokes while someone's typing a
+                    // class name) never gets a chance to fire — Delete would
+                    // silently do nothing for as long as the editor stayed
+                    // open. Only step in when there's no search text to
+                    // edit, so backspacing through an actual query still
+                    // behaves normally.
+                    if ((e.key === "Backspace" || e.key === "Delete") && pendingClassName.trim() === "") {
+                      e.preventDefault()
+                      if (pendingShape) {
+                        handleDiscardPendingShape()
+                      } else if (editingAnnotationId) {
+                        handleDelete(editingAnnotationId)
+                        closeAnnotationEditor()
+                      }
                     }
                   }}
                   placeholder="Search or create a class…"
@@ -2011,7 +2186,8 @@ export function AnnotationToolPage() {
                   )}
                 </div>
               </div>
-            </div>
+            </div>,
+            document.body
           )}
 
           <Tabs
@@ -2199,8 +2375,8 @@ export function AnnotationToolPage() {
               onDoubleClick={handleCanvasDoubleClick}
               className="relative select-none"
               style={{
-                width: 800,
-                height: 560,
+                width: canvasBoxSize.width,
+                height: canvasBoxSize.height,
                 transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
                 cursor: isPanning
                   ? "grabbing"
@@ -2220,6 +2396,10 @@ export function AnnotationToolPage() {
                 className="size-full rounded object-cover"
                 style={{ filter: `contrast(${contrast}%) brightness(${brightness}%)` }}
                 draggable={false}
+                onLoad={(e) => {
+                  const { naturalWidth, naturalHeight } = e.currentTarget
+                  if (naturalWidth && naturalHeight) setImageAspect(naturalWidth / naturalHeight)
+                }}
               />
               {bgDarkness > 0 && (
                 <div
@@ -2383,36 +2563,90 @@ export function AnnotationToolPage() {
               {pendingComment && (
                 <div
                   onClick={(e) => e.stopPropagation()}
-                  className="absolute z-20 w-56 -translate-x-1/2 rounded-lg border border-brand/40 bg-popover p-3 shadow-lg"
+                  className="absolute z-20 w-64 -translate-x-1/2 rounded-lg border border-brand/40 bg-popover p-3 shadow-lg"
                   style={{ left: `${pendingComment.x}%`, top: `${pendingComment.y}%` }}
                 >
-                  <textarea
-                    autoFocus
-                    value={commentDraft}
-                    onChange={(e) => setCommentDraft(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Escape") {
-                        setPendingComment(null)
-                        setCommentDraft("")
-                      }
-                    }}
-                    placeholder="Leave a comment…"
-                    className="h-16 w-full resize-none rounded-md border border-input bg-background p-1.5 text-xs outline-none"
-                  />
-                  <div className="mt-1.5 flex justify-end gap-1.5">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => {
-                        setPendingComment(null)
-                        setCommentDraft("")
+                  <div className="relative">
+                    <textarea
+                      ref={commentTextareaRef}
+                      autoFocus
+                      value={commentDraft}
+                      onChange={(e) => handleCommentDraftChange(e.target.value, e.target.selectionStart ?? e.target.value.length)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") {
+                          if (mentionQuery !== null) {
+                            setMentionQuery(null)
+                            return
+                          }
+                          setPendingComment(null)
+                          setCommentDraft("")
+                        }
                       }}
+                      placeholder="Leave a comment…"
+                      className="h-16 w-full resize-none rounded-md border border-input bg-background p-1.5 text-xs outline-none"
+                    />
+                    {mentionQuery !== null && filteredMentionMembers.length > 0 && (
+                      <div className="absolute bottom-full left-0 z-30 mb-1 max-h-40 w-full overflow-y-auto rounded-md border border-border bg-popover py-1 shadow-lg">
+                        {filteredMentionMembers.map((m) => (
+                          <button
+                            key={m.id}
+                            type="button"
+                            onClick={() => insertMention(m)}
+                            className="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-accent"
+                          >
+                            <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-brand/15 text-[10px] font-medium text-brand">
+                              {initials(m)}
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <p className="truncate text-xs font-medium text-foreground">{fullName(m)}</p>
+                              <p className="truncate text-[10px] text-muted-foreground">{m.email}</p>
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="mt-1.5 flex items-center justify-between">
+                    <button
+                      type="button"
+                      title="Mention someone"
+                      onClick={() => {
+                        const el = commentTextareaRef.current
+                        const cursor = el?.selectionStart ?? commentDraft.length
+                        const newValue = commentDraft.slice(0, cursor) + "@" + commentDraft.slice(cursor)
+                        handleCommentDraftChange(newValue, cursor + 1)
+                        requestAnimationFrame(() => {
+                          el?.focus()
+                          el?.setSelectionRange(cursor + 1, cursor + 1)
+                        })
+                      }}
+                      className="flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
                     >
-                      Cancel
-                    </Button>
-                    <Button size="sm" variant="brand" onClick={handleAddComment} disabled={savingComment || !commentDraft.trim()}>
-                      {savingComment ? "Posting…" : "Post"}
-                    </Button>
+                      <AtSign className="size-3.5" />
+                    </button>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        title="Cancel"
+                        onClick={() => {
+                          setPendingComment(null)
+                          setCommentDraft("")
+                          setMentionQuery(null)
+                        }}
+                        className="flex size-6 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground"
+                      >
+                        <X className="size-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        title="Post comment"
+                        onClick={handleAddComment}
+                        disabled={savingComment || !commentDraft.trim()}
+                        className="flex size-6 items-center justify-center rounded-full bg-brand text-brand-foreground shadow-sm hover:brightness-110 disabled:opacity-40"
+                      >
+                        <ArrowUp className="size-3.5" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}

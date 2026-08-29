@@ -9,9 +9,9 @@ import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
 import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
-import { ChevronUp, ChevronDown, X, GripVertical } from "lucide-react"
+import { ChevronUp, ChevronDown, X, RotateCcw } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { initiateVideoUpload, triggerExtraction } from "@/lib/uploadApi"
+import { initiateVideoUpload, probeVideo, triggerExtraction } from "@/lib/uploadApi"
 import { samplingPresets } from "@/lib/videoSampling"
 import { useExtractionProgress } from "@/hooks/useExtractionProgress"
 
@@ -29,7 +29,15 @@ interface VideoExtractorProps {
   onSkip: () => void
 }
 
-const FILMSTRIP_FRAME_COUNT = 18
+// Fallback density before duration/interval are known yet.
+const FILMSTRIP_FRAME_COUNT = 15
+// The filmstrip should show every frame the current sampling rate would
+// actually pull from the full timeline — that's the only way dragging a
+// handle by one cell corresponds to adding/removing one real extracted
+// frame. Capped so an aggressive rate (e.g. 60fps) on a longer clip can't
+// demand hundreds of live canvas captures.
+const PREVIEW_MIN_FRAMES = 8
+const PREVIEW_MAX_FRAMES = 150
 const ASSUMED_FPS = 30
 const MIN_RANGE_SECONDS = 0.5
 
@@ -88,6 +96,12 @@ export function VideoExtractor({
 
   const [duration, setDuration] = useState(0)
   const [currentTime, setCurrentTime] = useState(0)
+  // The source video's own aspect ratio — driving the filmstrip's height
+  // from this (rather than a guessed fixed height) is what keeps individual
+  // frames looking like the actual footage instead of stretched/over-cropped
+  // slivers, regardless of how many cells fit across the dialog's width.
+  const [videoAspect, setVideoAspect] = useState<number | null>(null)
+  const [filmstripWidth, setFilmstripWidth] = useState(0)
   const [filmstrip, setFilmstrip] = useState<string[]>([])
   const [filmstripStatus, setFilmstripStatus] = useState<"loading" | "ready" | "unavailable">(
     "loading"
@@ -99,11 +113,52 @@ export function VideoExtractor({
   const [rangeEnd, setRangeEnd] = useState(0)
   const [draggingHandle, setDraggingHandle] = useState<"start" | "end" | null>(null)
 
+  // The source video's own frame rate — a purely client-side estimate
+  // (duration / interval) can't know this, so it happily shows counts
+  // above what the video actually contains (ffmpeg would then duplicate
+  // frames to reach it). Probed once, read-only, as soon as a file is
+  // picked — nothing is uploaded/persisted by this call.
+  const [nativeFps, setNativeFps] = useState<number | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    setNativeFps(null)
+    probeVideo(workspaceId, projectId, file)
+      .then((res) => {
+        if (!cancelled) setNativeFps(res.native_fps)
+      })
+      .catch(() => {
+        // Probe failing shouldn't block the preview — just means the
+        // estimate stays uncapped until extraction time, where the worker
+        // applies the same cap itself regardless.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [workspaceId, projectId, file])
+
   const presets = useMemo(() => (duration > 0 ? samplingPresets(duration) : []), [duration])
   const minInterval = presets.length ? Math.min(...presets.map((p) => p.interval)) : 1 / 60
   const maxInterval = presets.length ? Math.max(...presets.map((p) => p.interval)) : 60
 
   const [frameInterval, setFrameInterval] = useState(1)
+
+  // Debounced so dragging the rate slider doesn't fire off a fresh round of
+  // canvas seeks+captures on every intermediate value — only once the user
+  // actually settles on a rate.
+  const [debouncedInterval, setDebouncedInterval] = useState(frameInterval)
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedInterval(frameInterval), 350)
+    return () => window.clearTimeout(t)
+  }, [frameInterval])
+
+  const desiredFilmstripCount = useMemo(() => {
+    if (duration <= 0 || debouncedInterval <= 0) return FILMSTRIP_FRAME_COUNT
+    return Math.min(
+      PREVIEW_MAX_FRAMES,
+      Math.max(PREVIEW_MIN_FRAMES, Math.round(duration / debouncedInterval))
+    )
+  }, [duration, debouncedInterval])
+
   const [phase, setPhase] = useState<"idle" | "uploading" | "extracting">("idle")
   const [videoUploadId, setVideoUploadId] = useState<string | null>(null)
   const [committedBatchId, setCommittedBatchId] = useState<string | null>(null)
@@ -120,14 +175,25 @@ export function VideoExtractor({
     }
   }, [duration, rangeEnd])
 
-  // ── Generate filmstrip thumbnails once, off-screen, without touching the visible player ──
+  // ── Generate filmstrip thumbnails off-screen, without touching the visible player ──
+  // Re-runs whenever desiredFilmstripCount changes (i.e. the sampling rate
+  // settled on a new value) so the strip always shows exactly the frames
+  // the current settings would actually extract, not a fixed decorative
+  // count unrelated to it.
   useEffect(() => {
-    if (!open || duration === 0 || filmstrip.length > 0 || !videoUrl) return
+    if (!open || duration === 0 || !videoUrl) return
     const thumbVideo = thumbVideoEl
     const canvas = canvasEl
     if (!thumbVideo || !canvas) return
 
+    setFilmstripStatus("loading")
     let cancelled = false
+    // StrictMode (dev only) mounts this effect, cleans it up, then mounts it
+    // again — the first pass's generate() loop is mid-seek when cleanup
+    // runs. Track the in-flight seek's own cleanup so the effect's cleanup
+    // can force it to settle immediately instead of leaving it dangling to
+    // race the second (real) pass's seeks on the same shared <video>.
+    let activeSeekCleanup: (() => void) | null = null
 
     function giveUp() {
       if (cancelled) return
@@ -135,19 +201,32 @@ export function VideoExtractor({
       setFilmstripStatus("unavailable")
     }
 
-    function waitForSeek(t: number): Promise<boolean> {
+    // Waits for the seek to visibly land, but — unlike the old version —
+    // NEVER reports failure. Some browsers occasionally never fire "seeked"
+    // for a given seek (especially on sparsely-keyframed footage like
+    // security-cam H.264), and treating that as "skip this slot" was why
+    // the strip would silently end up with fewer cells than intended (e.g.
+    // 5 instead of 15). Whatever frame is actually on screen once we stop
+    // waiting is still a perfectly good thumbnail — capturing something is
+    // always better than capturing nothing, so this only ever delays, never
+    // drops, a slot.
+    function settleSeek(t: number): Promise<void> {
       return new Promise((resolve) => {
         let done = false
-        const finish = (ok: boolean) => {
+        const finish = () => {
           if (done) return
           done = true
-          thumbVideo!.removeEventListener("seeked", onSeeked)
-          window.clearTimeout(seekTimeout)
-          resolve(ok)
+          thumbVideo!.removeEventListener("seeked", onSettled)
+          thumbVideo!.removeEventListener("timeupdate", onSettled)
+          window.clearTimeout(timer)
+          activeSeekCleanup = null
+          resolve()
         }
-        const onSeeked = () => finish(true)
-        const seekTimeout = window.setTimeout(() => finish(false), 4000)
-        thumbVideo!.addEventListener("seeked", onSeeked)
+        const onSettled = () => finish()
+        const timer = window.setTimeout(finish, 1500)
+        thumbVideo!.addEventListener("seeked", onSettled, { once: true })
+        thumbVideo!.addEventListener("timeupdate", onSettled, { once: true })
+        activeSeekCleanup = finish
         thumbVideo!.currentTime = t
       })
     }
@@ -157,18 +236,28 @@ export function VideoExtractor({
       if (!ctx) return giveUp()
 
       const results: string[] = []
-      const step = duration / (FILMSTRIP_FRAME_COUNT + 1)
+      const frameCount = desiredFilmstripCount
+      const step = duration / (frameCount + 1)
+
+      // Capturing at a fixed 80x56 box (unrelated to the source video's real
+      // aspect ratio) squashed every frame into that shape — actual pixel
+      // distortion baked into the JPEG, not just a display-layer crop, so no
+      // amount of CSS sizing on the <img> could ever undo it. Derive the
+      // capture box from the video's own dimensions instead.
+      const vw = thumbVideo!.videoWidth || 16
+      const vh = thumbVideo!.videoHeight || 9
+      const captureWidth = 160
+      const captureHeight = Math.round((captureWidth * vh) / vw)
 
       try {
-        for (let i = 1; i <= FILMSTRIP_FRAME_COUNT; i++) {
+        for (let i = 1; i <= frameCount; i++) {
           if (cancelled) return
           const t = step * i
-          const seeked = await waitForSeek(t)
+          await settleSeek(t)
           if (cancelled) return
-          if (!seeked) continue
-          canvas!.width = 80
-          canvas!.height = 56
-          ctx.drawImage(thumbVideo!, 0, 0, 80, 56)
+          canvas!.width = captureWidth
+          canvas!.height = captureHeight
+          ctx.drawImage(thumbVideo!, 0, 0, captureWidth, captureHeight)
           results.push(canvas!.toDataURL("image/jpeg", 0.6))
         }
         if (!cancelled) {
@@ -201,15 +290,71 @@ export function VideoExtractor({
 
     return () => {
       cancelled = true
+      activeSeekCleanup?.()
       thumbVideo.removeEventListener("loadedmetadata", onLoadedMetadata)
       thumbVideo.removeEventListener("error", onError)
     }
-  }, [open, duration, thumbVideoEl, canvasEl, filmstrip.length, videoUrl])
+  }, [open, duration, thumbVideoEl, canvasEl, videoUrl, desiredFilmstripCount])
+
+  // Tracks the filmstrip's actual rendered width so its height can be
+  // derived from the real video aspect ratio instead of a guessed constant.
+  useEffect(() => {
+    const el = filmstripRef.current
+    if (!el) return
+    const observer = new ResizeObserver(([entry]) => setFilmstripWidth(entry.contentRect.width))
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [open])
+
+  // Each cell is filmstripWidth / count wide; deriving height from the
+  // source video's own aspect ratio means individual frames show their real
+  // proportions instead of being stretched or over-cropped by object-cover.
+  const filmstripHeight = useMemo(() => {
+    const fallback = 96
+    if (!videoAspect || !filmstripWidth) return fallback
+    const count = filmstrip.length || desiredFilmstripCount
+    const gapTotal = (count - 1) * 2
+    const cellWidth = (filmstripWidth - gapTotal) / count
+    // Clamped so a high frame count on a wide (16:9-ish) video never
+    // shrinks the strip down to an unusably thin sliver — some cropping at
+    // that density is normal (Roboflow's own filmstrip crops too), the bug
+    // was distorted pixels, not the crop itself.
+    return Math.min(112, Math.max(64, Math.round(cellWidth / videoAspect)))
+  }, [videoAspect, filmstripWidth, filmstrip.length, desiredFilmstripCount])
 
   const trimmedDuration = Math.max(MIN_RANGE_SECONDS, rangeEnd - rangeStart)
+  // Capped at what the source can actually deliver over the trimmed range
+  // — matches the same cap the celery worker applies at extraction time,
+  // so this number never over-promises what "Extract N Frames" produces.
   const outputCount =
-    frameInterval > 0 ? Math.max(1, Math.round(trimmedDuration / frameInterval)) : 0
+    frameInterval > 0
+      ? Math.max(
+          1,
+          Math.min(
+            Math.round(trimmedDuration / frameInterval),
+            nativeFps != null ? Math.floor(trimmedDuration * nativeFps) : Infinity
+          )
+        )
+      : 0
   const combinedCount = outputCount + manualMarks.length
+
+  // Local draft text for the two numeric inputs below, decoupled from the
+  // committed frameInterval/outputCount — a controlled <input type="number">
+  // bound directly to the derived value fights the user mid-keystroke
+  // (e.g. typing "0.5" starts with "0", which used to collapse straight
+  // back to the minimum via `Number(...) || minInterval`, making the field
+  // feel un-typeable). Committing on every parseable value keeps live
+  // updates while still letting an in-progress edit sit uncommitted.
+  const [intervalDraft, setIntervalDraft] = useState(() => String(frameInterval))
+  const [countDraft, setCountDraft] = useState(() => String(outputCount))
+
+  useEffect(() => {
+    setIntervalDraft(String(Number(frameInterval.toFixed(3))))
+  }, [frameInterval])
+
+  useEffect(() => {
+    setCountDraft(String(outputCount))
+  }, [outputCount])
 
   const sliderPosition = useMemo(() => {
     if (!duration) return 0
@@ -223,7 +368,12 @@ export function VideoExtractor({
     const logMin = Math.log(minInterval)
     const logMax = Math.log(maxInterval)
     const logVal = logMin + (position / 100) * (logMax - logMin)
-    setFrameInterval(Number(Math.exp(logVal).toFixed(3)))
+    // Rounding this to 3 decimals used to throw away most of the precision
+    // at the fast end of the scale (1/60 ≈ 0.0167 rounds to 0.017, a ~2%
+    // error) which snowballs into dozens of frames of difference once
+    // duration / interval is computed — keep the raw float, only round for
+    // on-screen display (formatRate / intervalDraft already do that).
+    setFrameInterval(Math.exp(logVal))
   }
 
   function seekTo(t: number) {
@@ -239,9 +389,12 @@ export function VideoExtractor({
       const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
       const t = pct * duration
       if (draggingHandle === "start") {
-        setRangeStart(Math.min(t, rangeEnd - MIN_RANGE_SECONDS))
+        const next = Math.min(t, rangeEnd - MIN_RANGE_SECONDS)
+        setRangeStart(next)
+        seekTo(next)
       } else {
-        setRangeEnd(Math.max(t, rangeStart + MIN_RANGE_SECONDS))
+        const next = Math.max(t, rangeStart + MIN_RANGE_SECONDS)
+        setRangeEnd(next)
       }
     },
     [draggingHandle, duration, rangeStart, rangeEnd]
@@ -298,7 +451,8 @@ export function VideoExtractor({
         initiated.video_upload_id,
         frameInterval,
         manualMarks,
-        { start: rangeStart, end: rangeEnd }
+        { start: rangeStart, end: rangeEnd },
+        nativeFps
       )
       setVideoUploadId(res.video_upload_id)
     } catch (err) {
@@ -336,26 +490,63 @@ export function VideoExtractor({
                 src={videoUrl ?? undefined}
                 controls
                 className="aspect-video w-full rounded-lg bg-black"
-                onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
-                onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
+                onLoadedMetadata={(e) => {
+                  setDuration(e.currentTarget.duration)
+                  const { videoWidth, videoHeight } = e.currentTarget
+                  if (videoWidth && videoHeight) setVideoAspect(videoWidth / videoHeight)
+                }}
+                onTimeUpdate={(e) => {
+                  const t = e.currentTarget.currentTime
+                  // The trim range is what actually gets extracted — playback
+                  // should preview just that range too, not run past the end
+                  // handle into footage that won't be in the output.
+                  if (rangeEnd > 0 && t >= rangeEnd) {
+                    e.currentTarget.pause()
+                    e.currentTarget.currentTime = rangeEnd
+                    setCurrentTime(rangeEnd)
+                    return
+                  }
+                  setCurrentTime(t)
+                }}
               />
 
               <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
                 <span>
                   {formatTimestamp(currentTime)} / {formatTimestamp(duration)}
                 </span>
-                <button
-                  onClick={() => setManualOpen((v) => !v)}
-                  className="flex items-center gap-1 rounded-md border border-border px-2 py-1 font-medium text-foreground hover:bg-accent"
-                >
-                  {manualOpen ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
-                  {manualOpen ? "Hide" : "Show"} Manual Selection
-                </button>
+                <div className="flex items-center gap-1.5">
+                  {duration > 0 && (rangeStart > 0 || rangeEnd < duration) && (
+                    <button
+                      title="Reset sampling range"
+                      onClick={() => {
+                        setRangeStart(0)
+                        setRangeEnd(duration)
+                      }}
+                      className="flex items-center gap-1 rounded-md border border-border px-2 py-1 font-medium text-foreground hover:bg-accent"
+                    >
+                      <RotateCcw className="size-3.5" />
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setManualOpen((v) => !v)}
+                    className="flex items-center gap-1 rounded-md border border-border px-2 py-1 font-medium text-foreground hover:bg-accent"
+                  >
+                    {manualOpen ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
+                    {manualOpen ? "Hide" : "Show"} Manual Selection
+                  </button>
+                </div>
               </div>
 
               <div
                 ref={filmstripRef}
-                className="relative mt-2 flex h-24 overflow-hidden rounded-md border border-border bg-muted select-none"
+                onClick={(e) => {
+                  if (!filmstripRef.current || !duration) return
+                  const rect = filmstripRef.current.getBoundingClientRect()
+                  const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
+                  seekTo(pct * duration)
+                }}
+                style={{ height: filmstripHeight }}
+                className="relative mt-2 flex cursor-pointer overflow-hidden rounded-md border border-border bg-muted select-none"
               >
                 {filmstripStatus === "loading" ? (
                   <div className="flex w-full items-center justify-center text-xs text-muted-foreground">
@@ -366,7 +557,7 @@ export function VideoExtractor({
                     Preview unavailable — use the player above and the controls below to pick frames.
                   </div>
                 ) : (
-                  <div className="flex w-full gap-px bg-black">
+                  <div className="flex w-full gap-0.5 bg-black">
                     {filmstrip.map((src, i) => (
                       <img key={i} src={src} className="h-full flex-1 object-cover" alt="" />
                     ))}
@@ -384,8 +575,11 @@ export function VideoExtractor({
                       style={{ width: `${100 - (rangeEnd / duration) * 100}%` }}
                     />
                     <div
-                      className="pointer-events-none absolute top-0 h-full w-0.5 bg-brand"
-                      style={{ left: `${(currentTime / duration) * 100}%` }}
+                      className="pointer-events-none absolute top-0 z-10 h-full w-[3px] bg-white"
+                      style={{
+                        left: `${(currentTime / duration) * 100}%`,
+                        boxShadow: "0 0 8px 2px var(--brand), 0 0 2px 1px rgba(255,255,255,0.9)",
+                      }}
                     />
                     {manualMarks.map((m) => (
                       <div
@@ -397,42 +591,31 @@ export function VideoExtractor({
                     <div
                       onPointerDown={(e) => {
                         e.preventDefault()
+                        e.stopPropagation()
                         setDraggingHandle("start")
+                        seekTo(rangeStart)
                       }}
-                      className="absolute top-0 z-10 flex h-full w-4 -translate-x-1/2 cursor-ew-resize items-center justify-center rounded-md bg-brand shadow-md ring-1 ring-white/40 hover:brightness-110"
+                      onClick={(e) => e.stopPropagation()}
+                      className="absolute top-0 z-10 flex h-full w-4 -translate-x-1/2 cursor-ew-resize items-center justify-center"
                       style={{ left: `${(rangeStart / duration) * 100}%` }}
                     >
-                      <GripVertical className="size-3.5 text-brand-foreground" />
+                      <div className="h-full w-2.5 rounded-full bg-brand shadow-sm" />
                     </div>
                     <div
                       onPointerDown={(e) => {
                         e.preventDefault()
+                        e.stopPropagation()
                         setDraggingHandle("end")
                       }}
-                      className="absolute top-0 z-10 flex h-full w-4 -translate-x-1/2 cursor-ew-resize items-center justify-center rounded-md bg-brand shadow-md ring-1 ring-white/40 hover:brightness-110"
+                      onClick={(e) => e.stopPropagation()}
+                      className="absolute top-0 z-10 flex h-full w-4 -translate-x-1/2 cursor-ew-resize items-center justify-center"
                       style={{ left: `${(rangeEnd / duration) * 100}%` }}
                     >
-                      <GripVertical className="size-3.5 text-brand-foreground" />
+                      <div className="h-full w-2.5 rounded-full bg-brand shadow-sm" />
                     </div>
                   </>
                 )}
               </div>
-              {duration > 0 && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Sampling range: {formatTimestamp(rangeStart)} – {formatTimestamp(rangeEnd)}
-                  {(rangeStart > 0 || rangeEnd < duration) && (
-                    <button
-                      className="ml-2 text-brand hover:underline"
-                      onClick={() => {
-                        setRangeStart(0)
-                        setRangeEnd(duration)
-                      }}
-                    >
-                      Reset
-                    </button>
-                  )}
-                </p>
-              )}
 
               {manualOpen && (
                 <div className="mt-3 rounded-lg border border-border p-3">
@@ -526,8 +709,8 @@ export function VideoExtractor({
 
                 <div className="relative h-7">
                   <span
-                    className="absolute top-0 -translate-x-1/2 rounded-md bg-brand px-2.5 py-1 text-xs font-medium whitespace-nowrap text-brand-foreground"
-                    style={{ left: `${sliderPosition}%` }}
+                    className="absolute top-0 -translate-x-1/2 rounded-md border border-brand bg-background px-2.5 py-1 text-xs font-medium whitespace-nowrap text-brand shadow-md"
+                    style={{ left: `${Math.min(94, Math.max(6, sliderPosition))}%` }}
                   >
                     {formatRate(frameInterval)}
                   </span>
@@ -548,23 +731,30 @@ export function VideoExtractor({
                     step="0.1"
                     min={minInterval}
                     max={maxInterval}
-                    value={frameInterval}
-                    onChange={(e) =>
-                      setFrameInterval(
-                        Math.max(minInterval, Math.min(maxInterval, Number(e.target.value) || minInterval))
-                      )
-                    }
+                    value={intervalDraft}
+                    onChange={(e) => {
+                      setIntervalDraft(e.target.value)
+                      const parsed = Number(e.target.value)
+                      if (e.target.value.trim() !== "" && !Number.isNaN(parsed)) {
+                        setFrameInterval(Math.max(minInterval, Math.min(maxInterval, parsed)))
+                      }
+                    }}
+                    onBlur={() => setIntervalDraft(String(Number(frameInterval.toFixed(3))))}
                     className="h-8 w-20"
                   />
                   seconds (
                   <Input
                     type="number"
                     min={1}
-                    value={outputCount}
+                    value={countDraft}
                     onChange={(e) => {
-                      const count = Math.max(1, Number(e.target.value) || 1)
-                      setFrameInterval(trimmedDuration / count)
+                      setCountDraft(e.target.value)
+                      const parsed = Number(e.target.value)
+                      if (e.target.value.trim() !== "" && !Number.isNaN(parsed) && parsed >= 1) {
+                        setFrameInterval(trimmedDuration / parsed)
+                      }
                     }}
+                    onBlur={() => setCountDraft(String(outputCount))}
                     className="h-8 w-20"
                   />
                   images)

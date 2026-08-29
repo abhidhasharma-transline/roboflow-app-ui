@@ -31,6 +31,7 @@ import {
   updateJobTitle, tagJobImages, moveJobToUnassigned, deleteJobAnnotations,
 } from "@/lib/jobApi"
 import { discardBatch } from "@/lib/uploadApi"
+import { extractErrorMessage } from "@/lib/utils"
 import { useWorkspaceStore } from "@/stores/workspaceStore"
 import { useToastStore } from "@/stores/toastStore"
 import type { BatchSummary, JobSummary } from "@/types/job"
@@ -277,8 +278,8 @@ function ActiveJobCard({
       setMoveOpen(false)
       onChanged()
       addToast({ variant: "success", title: "Moved to unassigned", description: job.title })
-    } catch {
-      addToast({ variant: "error", title: "Couldn't move to unassigned", description: "Please try again." })
+    } catch (err) {
+      addToast({ variant: "error", title: "Couldn't move to unassigned", description: extractErrorMessage(err) })
     } finally {
       setMoving(false)
     }
@@ -540,8 +541,8 @@ function DatasetJobCard({
       setMoveOpen(false)
       onChanged()
       addToast({ variant: "success", title: "Moved to unassigned", description: job.title })
-    } catch {
-      addToast({ variant: "error", title: "Couldn't move to unassigned", description: "Please try again." })
+    } catch (err) {
+      addToast({ variant: "error", title: "Couldn't move to unassigned", description: extractErrorMessage(err) })
     } finally {
       setMoving(false)
     }
@@ -655,6 +656,7 @@ function DatasetJobCard({
 export function AnnotatePage() {
   const { projectId } = useParams()
   const workspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
+  const addToast = useToastStore((s) => s.addToast)
   const [unassignedBatches, setUnassignedBatches] = useState<BatchSummary[]>([])
   const [activeJobs, setActiveJobs] = useState<JobSummary[]>([])
   const [datasetJobs, setDatasetJobs] = useState<JobSummary[]>([])
@@ -662,15 +664,27 @@ export function AnnotatePage() {
 
   function refetch() {
     if (!workspaceId || !projectId) return
-    Promise.all([
+    // Promise.all fails closed — one endpoint erroring (e.g. a permissions
+    // bug that only a non-admin role hits) used to blank out ALL THREE
+    // columns with zero indication anything went wrong, since none of the
+    // three .then()s ever ran. allSettled applies whichever calls actually
+    // succeeded and surfaces a toast only for the one(s) that didn't.
+    Promise.allSettled([
       listBatches(workspaceId, projectId, "unassigned"),
       listJobs(workspaceId, projectId, undefined, "annotating"),
       listJobs(workspaceId, projectId, undefined, "dataset"),
     ])
       .then(([batches, jobs, dataset]) => {
-        setUnassignedBatches(batches)
-        setActiveJobs(jobs)
-        setDatasetJobs(dataset)
+        if (batches.status === "fulfilled") setUnassignedBatches(batches.value)
+        if (jobs.status === "fulfilled") setActiveJobs(jobs.value)
+        if (dataset.status === "fulfilled") setDatasetJobs(dataset.value)
+        if (batches.status === "rejected" || jobs.status === "rejected" || dataset.status === "rejected") {
+          addToast({
+            variant: "error",
+            title: "Couldn't load some of this board",
+            description: "Part of the Annotate board failed to load — try refreshing.",
+          })
+        }
       })
       .finally(() => setLoading(false))
   }

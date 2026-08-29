@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { useToastStore } from "@/stores/toastStore"
+import { exportFilename } from "@/lib/utils"
 import {
   getVersionImages,
   renameVersion,
@@ -69,6 +70,7 @@ function ThumbAnnotations({ img }: { img: VersionImageSummary }) {
 export function VersionDetailView({
   workspaceId,
   projectId,
+  projectName,
   version,
   annotationType,
   onRenamed,
@@ -76,6 +78,7 @@ export function VersionDetailView({
 }: {
   workspaceId: string
   projectId: string
+  projectName: string
   version: ProjectVersion
   annotationType: ProjectAnnotationType
   onRenamed: (v: ProjectVersion) => void
@@ -125,14 +128,14 @@ export function VersionDetailView({
     }
   }
 
-  async function handleDownload() {
+  async function handleDownload(format: string) {
     setDownloading(true)
     try {
       const blob = await exportVersionYolo(workspaceId, projectId, version.id)
       const objectUrl = URL.createObjectURL(blob)
       const a = document.createElement("a")
       a.href = objectUrl
-      a.download = `${version.name}.zip`
+      a.download = exportFilename([projectName, version.name, format.toLowerCase()], "zip")
       document.body.appendChild(a)
       a.click()
       a.remove()

@@ -66,6 +66,27 @@ export async function initiateVideoUpload(
   return res.data
 }
 
+/**
+ * POST /upload/video/probe — read-only ffprobe metadata (duration +
+ * native_fps), no storage write, no DB row. Called as soon as a video is
+ * picked so the trim/sampling UI can show frame-count math that matches
+ * what extraction will actually produce, instead of a duration-only guess.
+ */
+export async function probeVideo(
+  workspaceId: string,
+  projectId: string,
+  file: File
+): Promise<{ duration: number; duration_label: string; native_fps: number }> {
+  const form = new FormData()
+  form.append("file", file)
+  const res = await api.post<{ duration: number; duration_label: string; native_fps: number }>(
+    `${uploadBase(workspaceId, projectId)}/video/probe`,
+    form,
+    { headers: { "Content-Type": "multipart/form-data" } }
+  )
+  return res.data
+}
+
 /** POST /upload/video/extract — step 2 of 2. Queues extraction, returns immediately. */
 export async function triggerExtraction(
   workspaceId: string,
@@ -73,7 +94,8 @@ export async function triggerExtraction(
   videoUploadId: string,
   frameInterval: number,
   manualMarks: number[],
-  range?: { start: number; end: number }
+  range?: { start: number; end: number },
+  nativeFps?: number | null
 ): Promise<TriggerExtractionResponse> {
   const res = await api.post<TriggerExtractionResponse>(
     `${uploadBase(workspaceId, projectId)}/video/extract`,
@@ -81,11 +103,14 @@ export async function triggerExtraction(
       video_upload_id: videoUploadId,
       frame_interval: frameInterval,
       manual_marks: manualMarks,
-      // Optional — only meaningful once the backend's ExtractConfig accepts
-      // range_start/range_end and the Celery task applies them (e.g. via
-      // ffmpeg -ss/-to before the fps filter). Omit if not yet supported.
       range_start: range?.start,
       range_end: range?.end,
+      // Forwards the number probeVideo() already computed at file-select
+      // time, so the worker doesn't re-decode the whole video just to
+      // re-derive the same frame-rate cap — that redundant decode was why
+      // extraction sat at "Starting extraction..." for minutes on longer
+      // clips.
+      native_fps: nativeFps ?? undefined,
     }
   )
   return res.data
