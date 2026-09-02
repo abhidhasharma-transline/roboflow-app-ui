@@ -62,6 +62,40 @@ export async function tagBatchImages(
   return res.data
 }
 
+export async function mergeBatches(
+  workspaceId: string,
+  projectId: string,
+  batchIds: string[]
+): Promise<{ target_batch_id: string; moved_images: number }> {
+  const res = await api.post(`${base(workspaceId, projectId)}/merge`, { batch_ids: batchIds })
+  return res.data
+}
+
+/** Streams the batch's raw images as a zip (protected route, so a plain
+ *  <a href> can't carry the auth header) and saves it client-side. */
+export async function downloadBatchImages(
+  workspaceId: string,
+  projectId: string,
+  batchId: string,
+  fallbackName: string
+): Promise<void> {
+  const res = await api.get(`${base(workspaceId, projectId)}/${batchId}/download`, {
+    responseType: "blob",
+  })
+  const disposition = res.headers["content-disposition"] as string | undefined
+  const match = disposition?.match(/filename="([^"]+)"/)
+  const filename = match?.[1] || `${fallbackName}.zip`
+
+  const url = URL.createObjectURL(res.data as Blob)
+  const link = document.createElement("a")
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+}
+
 export async function createJob(
   workspaceId: string,
   projectId: string,
@@ -99,11 +133,12 @@ export async function getJobImages(
   workspaceId: string,
   projectId: string,
   jobId: string,
-  tab: "annotated" | "unannotated" | "all"
-): Promise<{ images: JobImageSummary[] }> {
-  const res = await api.get<{ images: JobImageSummary[] }>(
+  tab: "annotated" | "unannotated" | "all",
+  paging?: { skip?: number; limit?: number }
+): Promise<{ total: number; images: JobImageSummary[] }> {
+  const res = await api.get<{ total: number; images: JobImageSummary[] }>(
     `${jobsBase(workspaceId, projectId)}/${jobId}/images`,
-    { params: { tab } }
+    { params: { tab, ...paging } }
   )
   return res.data
 }

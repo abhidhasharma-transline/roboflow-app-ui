@@ -10,7 +10,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Lock, Scan, Tag, Shapes, Move3d } from "lucide-react"
+import { Lock, Scan, Shapes } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { createProject } from "@/lib/projectApi"
 import type { ProjectAnnotationType } from "@/types/project"
@@ -36,22 +36,10 @@ const typeOptions: {
     description: "Identify objects and their positions with bounding boxes.",
   },
   {
-    value: "classification",
-    icon: Tag,
-    label: "Classification",
-    description: "Assign labels to the entire image.",
-  },
-  {
     value: "segmentation",
     icon: Shapes,
     label: "Segmentation",
     description: "Detect multiple objects and their actual shape.",
-  },
-  {
-    value: "keypoint",
-    icon: Move3d,
-    label: "Keypoint Detection",
-    description: 'Identify keypoints ("skeletons") on subjects.',
   },
 ]
 

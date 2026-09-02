@@ -56,6 +56,8 @@ function Thumb({ img }: { img: BatchPreviewImage }) {
   )
 }
 
+const PAGE_SIZE = 50
+
 export function BatchReview({
   workspaceId,
   projectId,
@@ -66,7 +68,9 @@ export function BatchReview({
 }: BatchReviewProps) {
   const [tab, setTab] = useState<BatchPreviewTab>("all")
   const [preview, setPreview] = useState<BatchPreviewResponse | null>(null)
+  const [images, setImages] = useState<BatchPreviewImage[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [adding, setAdding] = useState<{ percent: number; label: string } | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -74,11 +78,17 @@ export function BatchReview({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const folderInputRef = useRef<HTMLInputElement>(null)
 
+  // Loads (or reloads) the FIRST page for a tab — used on tab switch,
+  // initial mount, and the manual "Refresh" button. A batch can have
+  // hundreds-to-thousands of images (fetchBatchPreview is already paginated
+  // server-side, 50 at a time), so this only ever replaces what's currently
+  // loaded, never re-fetches everything.
   async function refresh(targetTab: BatchPreviewTab = tab) {
     setLoading(true)
     try {
-      const res = await fetchBatchPreview(workspaceId, projectId, batchId, { tab: targetTab })
+      const res = await fetchBatchPreview(workspaceId, projectId, batchId, { tab: targetTab, skip: 0, limit: PAGE_SIZE })
       setPreview(res)
+      setImages(res.images)
     } catch {
       setError("Couldn't load this batch — try refreshing.")
     } finally {
@@ -86,28 +96,51 @@ export function BatchReview({
     }
   }
 
+  function loadMore() {
+    if (loadingMore) return
+    setLoadingMore(true)
+    fetchBatchPreview(workspaceId, projectId, batchId, { tab, skip: images.length, limit: PAGE_SIZE })
+      .then((res) => {
+        setPreview(res)
+        setImages((prev) => [...prev, ...res.images])
+      })
+      .finally(() => setLoadingMore(false))
+  }
+
   useEffect(() => {
     refresh(tab)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab])
 
-  // Thumbnails are generated asynchronously by a worker — poll a handful of
-  // times after the grid loads so images that were still "Processing…" pick
-  // up their real thumbnail without the person having to manually refresh.
+  // Thumbnails are generated asynchronously by a worker, one Celery task per
+  // image — for a small upload that finishes in a few seconds, but for a
+  // several-hundred-image batch it can genuinely take minutes. Re-fetch just
+  // the currently-loaded page every few seconds until none of THOSE images
+  // are still "Processing…" (not a fixed short attempt count, which used to
+  // give up well before large batches were actually done, leaving the grid
+  // stuck showing "Processing…" until a manual Refresh click), capped at 10
+  // minutes as a safety net so a genuinely stuck thumbnail doesn't poll forever.
   useEffect(() => {
+    if (images.length === 0) return
+    if (images.every((img) => img.thumbnail_url || img.is_duplicate)) return
     let cancelled = false
     let attempts = 0
     const interval = setInterval(async () => {
       attempts += 1
-      if (cancelled || attempts > 12) {
+      if (cancelled || attempts > 200) {
         clearInterval(interval)
         return
       }
       try {
-        const res = await fetchBatchPreview(workspaceId, projectId, batchId, { tab })
-        if (!cancelled) setPreview(res)
+        const res = await fetchBatchPreview(workspaceId, projectId, batchId, { tab, skip: 0, limit: images.length })
+        if (cancelled) return
+        setPreview(res)
+        setImages(res.images)
+        if (res.images.every((img) => img.thumbnail_url || img.is_duplicate)) {
+          clearInterval(interval)
+        }
       } catch {
-        // ignore — next tick will retry, or it'll just stop after 12 attempts
+        // ignore — next tick will retry, or it'll just stop after the cap
       }
     }, 3000)
     return () => {
@@ -115,7 +148,7 @@ export function BatchReview({
       clearInterval(interval)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, preview?.images.length])
+  }, [tab, images.length])
 
   async function handleAddFiles(fileList: FileList, folderName?: string) {
     const files = Array.from(fileList)
@@ -246,24 +279,36 @@ export function BatchReview({
             <Loader2 className="size-4 animate-spin" />
             Loading images…
           </div>
-        ) : !preview || preview.images.length === 0 ? (
+        ) : images.length === 0 ? (
           <div className="flex flex-col items-center gap-2 py-16 text-center text-sm text-muted-foreground">
             <CheckCircle2 className="size-8 text-muted-foreground/40" />
             No images in this tab yet.
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-4 py-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
-            {preview.images.map((img) => (
-              <div key={img.id} className="flex flex-col gap-1.5">
-                <div className="aspect-[4/3] overflow-hidden rounded-md border border-border bg-muted">
-                  <Thumb img={img} />
+          <>
+            <div className="grid grid-cols-2 gap-4 py-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+              {images.map((img) => (
+                <div key={img.id} className="flex flex-col gap-1.5 [content-visibility:auto] [contain-intrinsic-size:0_220px]">
+                  <div className="aspect-[4/3] overflow-hidden rounded-md border border-border bg-muted">
+                    <Thumb img={img} />
+                  </div>
+                  <p className="truncate text-xs text-muted-foreground" title={img.filename}>
+                    {img.filename}
+                  </p>
                 </div>
-                <p className="truncate text-xs text-muted-foreground" title={img.filename}>
-                  {img.filename}
+              ))}
+            </div>
+            {images.length < (preview?.counts[tab] ?? 0) && (
+              <div className="flex flex-col items-center gap-2 pb-2">
+                <p className="text-xs text-muted-foreground">
+                  {images.length} / {preview?.counts[tab] ?? 0} images
                 </p>
+                <Button variant="outline" size="sm" onClick={loadMore} disabled={loadingMore}>
+                  {loadingMore ? "Loading…" : "Load more"}
+                </Button>
               </div>
-            ))}
-          </div>
+            )}
+          </>
         )}
       </div>
 

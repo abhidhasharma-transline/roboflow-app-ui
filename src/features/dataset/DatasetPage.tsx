@@ -7,7 +7,6 @@ import {
   Trash2,
   Tag as TagIcon,
   SplitSquareHorizontal,
-  Zap,
   Database,
   UserPlus,
   Ban,
@@ -48,15 +47,20 @@ import { listProjectImages, bulkSetSplit, markImagesNull, type ProjectImageSumma
 import { removeImageFromProject } from "@/lib/commentApi"
 import { listClasses, type ProjectClass } from "@/lib/classApi"
 import { listTags, bulkApplyTags, bulkApplyMetadata, type ImageTag } from "@/lib/tagApi"
+import { objectCoverViewBox } from "@/lib/thumbnailGeometry"
 import { AssignForLabelingPanel } from "./AssignForLabelingPanel"
 import { ExportDatasetDialog } from "./ExportDatasetDialog"
 
 const PAGE_SIZE = 50
 
-function AnnotationOverlay({ img }: { img: ProjectImageSummary }) {
+function AnnotationOverlay({ img, containerAspect }: { img: ProjectImageSummary; containerAspect: number }) {
   if (img.annotations.length === 0) return null
   return (
-    <svg className="pointer-events-none absolute inset-0 size-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+    <svg
+      className="pointer-events-none absolute inset-0 size-full"
+      viewBox={objectCoverViewBox(img.width, img.height, containerAspect)}
+      preserveAspectRatio="none"
+    >
       {img.annotations.map((a, i) =>
         a.shape_type === "bbox" ? (
           <rect
@@ -310,18 +314,12 @@ export function DatasetPage() {
     <>
       <div className="flex h-full flex-col overflow-hidden">
       <div className="flex-1 overflow-y-auto p-8">
-        <div className="mb-6 flex items-center justify-between">
-          <div>
-            <h1 className="flex items-center gap-2.5 text-2xl font-semibold text-foreground">
-              <Database className="size-6" />
-              Dataset
-            </h1>
-            <p className="mt-1 text-sm text-muted-foreground">{total} image{total !== 1 && "s"} ready for training</p>
-          </div>
-          <Button variant="brand" disabled title="Coming soon — no training pipeline wired up yet">
-            <Zap className="size-4" />
-            Train Model
-          </Button>
+        <div className="mb-6">
+          <h1 className="flex items-center gap-2.5 text-2xl font-semibold text-foreground">
+            <Database className="size-6" />
+            Dataset
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">{total} image{total !== 1 && "s"} ready for training</p>
         </div>
 
         <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -425,7 +423,7 @@ export function DatasetPage() {
                         Processing…
                       </div>
                     )}
-                    {showAnnotations && <AnnotationOverlay img={img} />}
+                    {showAnnotations && <AnnotationOverlay img={img} containerAspect={4 / 3} />}
                     <button
                       title="View full size"
                       onClick={(e) => {
@@ -486,7 +484,7 @@ export function DatasetPage() {
                     {img.thumbnail_url && (
                       <img src={img.thumbnail_url} alt={img.filename} className="size-full object-cover" />
                     )}
-                    {showAnnotations && <AnnotationOverlay img={img} />}
+                    {showAnnotations && <AnnotationOverlay img={img} containerAspect={1} />}
                     <span className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition-colors group-hover:bg-black/30 group-hover:opacity-100">
                       <Maximize2 className="size-4 text-white" />
                     </span>
@@ -814,7 +812,12 @@ export function DatasetPage() {
                       Preview unavailable
                     </div>
                   )}
-                  {showAnnotations && <AnnotationOverlay img={images[previewIndex]} />}
+                  {showAnnotations && (
+                    <AnnotationOverlay
+                      img={images[previewIndex]}
+                      containerAspect={(images[previewIndex].width || 1) / (images[previewIndex].height || 1)}
+                    />
+                  )}
                 </div>
 
                 {previewIndex < images.length - 1 && (
@@ -839,7 +842,6 @@ export function DatasetPage() {
         <ExportDatasetDialog
           workspaceId={workspaceId}
           projectId={projectId}
-          projectName={project?.name ?? "dataset"}
           annotationType={project?.annotation_type ?? "object_detection"}
           classCount={classes.length}
           open={exportDialogOpen}

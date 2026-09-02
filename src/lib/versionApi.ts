@@ -46,6 +46,8 @@ export interface VersionImageSummary {
   filename: string
   thumbnail_url: string | null
   image_url: string | null
+  width: number | null
+  height: number | null
   split: "train" | "valid" | "test"
   annotations: VersionImageAnnotation[]
 }
@@ -105,20 +107,65 @@ export async function restoreVersion(
 export async function getVersionImages(
   workspaceId: string,
   projectId: string,
-  versionId: string
+  versionId: string,
+  params: { split?: "train" | "valid" | "test"; skip?: number; limit?: number } = {}
 ): Promise<{ total: number; items: VersionImageSummary[] }> {
-  const res = await api.get(`/workspaces/${workspaceId}/projects/${projectId}/versions/${versionId}/images`)
+  const res = await api.get(`/workspaces/${workspaceId}/projects/${projectId}/versions/${versionId}/images`, {
+    params,
+  })
   return res.data
 }
 
-export async function exportVersionYolo(
+/** Whether this version has any real polygon annotations — checked before
+ * export starts so a segmentation-unsupported YOLO version selection (see
+ * src/lib/yoloVersions.ts) can be flagged with a warning up front, instead
+ * of the user only finding out from the bundled README after downloading. */
+export async function checkVersionHasPolygon(
   workspaceId: string,
   projectId: string,
   versionId: string
-): Promise<Blob> {
+): Promise<boolean> {
   const res = await api.get(
-    `/workspaces/${workspaceId}/projects/${projectId}/versions/${versionId}/export/yolo`,
-    { responseType: "blob" }
+    `/workspaces/${workspaceId}/projects/${projectId}/versions/${versionId}/export/yolo/precheck`
+  )
+  return res.data.has_polygon
+}
+
+export interface VersionExportStatus {
+  status: "processing" | "done" | "failed"
+  percent: number
+  message?: string
+  download_url?: string
+}
+
+/** Kicks off a background export job — building a ZIP for thousands of
+ * images inline in the request risked a multi-minute held-open request and
+ * a large in-memory buffer. Poll getVersionExportStatus() for progress.
+ * `format` (e.g. "YOLOv8") doesn't change the label/image files — every
+ * YOLO release reads the identical layout — but it does pick which
+ * pretrained checkpoint + training command the bundled README.txt names. */
+export async function startVersionExport(
+  workspaceId: string,
+  projectId: string,
+  versionId: string,
+  format: string
+): Promise<{ export_id: string }> {
+  const res = await api.post(
+    `/workspaces/${workspaceId}/projects/${projectId}/versions/${versionId}/export/yolo/start`,
+    null,
+    { params: { format } }
+  )
+  return res.data
+}
+
+export async function getVersionExportStatus(
+  workspaceId: string,
+  projectId: string,
+  versionId: string,
+  exportId: string
+): Promise<VersionExportStatus> {
+  const res = await api.get(
+    `/workspaces/${workspaceId}/projects/${projectId}/versions/${versionId}/export/yolo/status/${exportId}`
   )
   return res.data
 }

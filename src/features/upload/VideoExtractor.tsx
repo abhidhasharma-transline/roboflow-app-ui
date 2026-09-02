@@ -559,7 +559,16 @@ export function VideoExtractor({
                 ) : (
                   <div className="flex w-full gap-0.5 bg-black">
                     {filmstrip.map((src, i) => (
-                      <img key={i} src={src} className="h-full flex-1 object-cover" alt="" />
+                      // min-w-0 is load-bearing: a flex item's default min-width is
+                      // "auto", which for an <img> means its own intrinsic pixel
+                      // width (160px, from the capture size in generate() below) —
+                      // without overriding that, flex-1 can shrink cells only down
+                      // to 160px each, so once more cells were generated than fit
+                      // at 160px apiece, the overflow-hidden wrapper silently
+                      // clipped the rest instead of everyone shrinking to fit. That's
+                      // why the strip looked like only ~5-6 wide frames instead of
+                      // the full dense set Roboflow's filmstrip shows.
+                      <img key={i} src={src} className="h-full min-w-0 flex-1 object-cover" alt="" />
                     ))}
                   </div>
                 )}

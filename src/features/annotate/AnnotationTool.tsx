@@ -9,9 +9,6 @@ import {
   EyeOff,
   MoreHorizontal,
   MoreVertical,
-  MousePointer2,
-  Square,
-  Spline,
   Brush,
   Wand2,
   Sparkles,
@@ -63,16 +60,16 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Switch } from "@/components/ui/switch"
 import { Slider } from "@/components/ui/slider"
-import { cn } from "@/lib/utils"
-import { useAnnotationStore, type AnnotationTool } from "@/stores/annotationStore"
+import { cn, extractErrorMessage } from "@/lib/utils"
+import { useAnnotationStore } from "@/stores/annotationStore"
 import { useWorkspaceStore } from "@/stores/workspaceStore"
 import { useAuthStore } from "@/stores/authStore"
 import { useThemeStore } from "@/stores/themeStore"
 import { useToastStore } from "@/stores/toastStore"
 import { useProject } from "@/hooks/useProjects"
-import { useAnnotationSocket, type LockInfo } from "@/hooks/useAnnotationSocket"
+import { useAnnotationSocket } from "@/hooks/useAnnotationSocket"
 import { getJobImages, moveJobToUnassigned, deleteJobAnnotations } from "@/lib/jobApi"
-import { listClasses, quickCreateClass, type ProjectClass } from "@/lib/classApi"
+import { listClasses, quickCreateClass, updateClass, type ProjectClass } from "@/lib/classApi"
 import { listAnnotations, createAnnotation, updateAnnotation, deleteAnnotation, toStoreAnnotation } from "@/lib/annotationApi"
 import {
   listImageTags, addImageTag, removeImageTag, addImageMetadata, removeImageMetadata,
@@ -88,175 +85,14 @@ import { listProjectMembers } from "@/lib/projectApi"
 import { fullName, initials } from "@/lib/userDisplay"
 import type { ProjectMember } from "@/types/project"
 import type { JobImageSummary } from "@/types/job"
-import type { Annotation, BoundingBox, Point } from "@/types/annotation"
+import type { BoundingBox, Point } from "@/types/annotation"
 
-type ResizeHandle = "n" | "ne" | "e" | "se" | "s" | "sw" | "w" | "nw"
+import type { ResizeHandle } from "./annotationCanvasTypes"
+import { NEW_CLASS_COLORS, tools, SHORTCUT_GROUPS, leftNavItems } from "./annotationToolConstants"
+import { clamp, isTypingInField } from "./annotationToolUtils"
+import { AnnotationBoxOverlay } from "./AnnotationBoxOverlay"
+import { ClassRow } from "./ClassRow"
 
-const RESIZE_HANDLES: { key: ResizeHandle; className: string; cursor: string }[] = [
-  { key: "nw", className: "-left-1 -top-1", cursor: "nwse-resize" },
-  { key: "n", className: "left-1/2 -top-1 -translate-x-1/2", cursor: "ns-resize" },
-  { key: "ne", className: "-top-1 -right-1", cursor: "nesw-resize" },
-  { key: "e", className: "top-1/2 -right-1 -translate-y-1/2", cursor: "ew-resize" },
-  { key: "se", className: "-right-1 -bottom-1", cursor: "nwse-resize" },
-  { key: "s", className: "left-1/2 -bottom-1 -translate-x-1/2", cursor: "ns-resize" },
-  { key: "sw", className: "-bottom-1 -left-1", cursor: "nesw-resize" },
-  { key: "w", className: "top-1/2 -left-1 -translate-y-1/2", cursor: "ew-resize" },
-]
-
-function clamp(n: number, min: number, max: number) {
-  return Math.min(Math.max(n, min), max)
-}
-
-const NEW_CLASS_COLORS = [
-  "#FF3B3B", "#3B82F6", "#22C55E", "#F59E0B", "#A855F7", "#EC4899", "#14B8A6", "#F97316",
-]
-
-const tools: { key: AnnotationTool; icon: typeof MousePointer2; label: string }[] = [
-  { key: "select", icon: MousePointer2, label: "Select (D)" },
-  { key: "bbox", icon: Square, label: "Bounding box (B)" },
-  { key: "polygon", icon: Spline, label: "Polygon (P)" },
-]
-
-// Documents the shortcuts actually wired up below — kept in sync by hand,
-// since a mismatch here is worse than not having the dialog at all.
-const SHORTCUT_GROUPS: { title: string; items: { keys: string[]; label: string; hint?: string }[] }[] = [
-  {
-    title: "General Shortcuts",
-    items: [
-      { keys: ["B"], label: "Bounding Box tool" },
-      { keys: ["P"], label: "Polygon tool" },
-      { keys: ["D"], label: "Select tool" },
-      { keys: ["Space", "drag"], label: "Pan the image" },
-      { keys: ["+"], label: "Zoom in" },
-      { keys: ["–"], label: "Zoom out" },
-      { keys: ["0"], label: "Reset zoom" },
-      { keys: ["←"], label: "Previous image" },
-      { keys: ["→"], label: "Next image" },
-      { keys: ["R"], label: "Repeat Previous", hint: "Copies every annotation from the last image onto this one." },
-      { keys: ["Shift", "A"], label: "Add Image to Dataset / Send to Unannotated", hint: "Toggles once the image has at least one annotation." },
-      { keys: ["Esc"], label: "Exit the annotation editor / cancel the shape you're drawing" },
-      { keys: ["Ctrl", "Z"], label: "Undo" },
-      { keys: ["Ctrl", "Y"], label: "Redo" },
-    ],
-  },
-  {
-    title: "With Annotation Selected",
-    items: [
-      { keys: ["Enter"], label: "Save changes to selection and label" },
-      { keys: ["Esc"], label: "Cancel changes and deselect" },
-      { keys: ["↑"], label: "Previous class" },
-      { keys: ["↓"], label: "Next class" },
-      { keys: ["1", "–", "9"], label: "Jump straight to the Nth class in the list" },
-      { keys: ["Backspace", "Delete"], label: "Delete selection" },
-      { keys: ["Ctrl", "C"], label: "Copy selected annotation" },
-      { keys: ["Ctrl", "V"], label: "Paste copied annotation onto the current image" },
-    ],
-  },
-]
-
-const leftNavItems = [
-  { key: "labels", icon: TagIcon, label: "Labels" },
-  { key: "attributes", icon: Sparkles, label: "Attributes" },
-  { key: "comments", icon: MessageSquare, label: "Comments" },
-  { key: "history", icon: HistoryIcon, label: "History" },
-  { key: "raw", icon: CircleSlash, label: "Raw Data" },
-]
-
-function AnnotationBoxOverlay({
-  annotation,
-  bbox,
-  lockedBy,
-  currentUserId,
-  deleting,
-  selected,
-  selectable,
-  alwaysShowLabels,
-  masked,
-  onDelete,
-  onContextMenu,
-  onBodyMouseDown,
-  onHandleMouseDown,
-}: {
-  annotation: Annotation
-  bbox: BoundingBox
-  lockedBy?: LockInfo
-  currentUserId?: string
-  deleting: boolean
-  selected: boolean
-  selectable: boolean
-  alwaysShowLabels: boolean
-  masked: boolean
-  onDelete: () => void
-  onContextMenu: (e: React.MouseEvent) => void
-  onBodyMouseDown: (e: React.MouseEvent) => void
-  onHandleMouseDown: (handle: ResizeHandle, e: React.MouseEvent) => void
-}) {
-  const lockedByOther = Boolean(lockedBy && lockedBy.userId !== currentUserId)
-
-  return (
-    <div
-      onContextMenu={onContextMenu}
-      onMouseDown={selectable ? onBodyMouseDown : undefined}
-      className="group absolute border-2"
-      style={{
-        left: `${bbox.x}%`,
-        top: `${bbox.y}%`,
-        width: `${bbox.width}%`,
-        height: `${bbox.height}%`,
-        borderColor: annotation.color,
-        backgroundColor: masked ? annotation.color : undefined,
-        cursor: selectable ? "move" : undefined,
-      }}
-    >
-      <span
-        className={cn(
-          "absolute -top-5 left-0 rounded-t px-1.5 py-0.5 text-[10px] font-medium text-white transition-opacity duration-150",
-          alwaysShowLabels ? "opacity-100" : "opacity-0 group-hover:opacity-100"
-        )}
-        style={{ backgroundColor: annotation.color }}
-      >
-        {annotation.className}
-      </span>
-      {lockedByOther && (
-        <span className="absolute -bottom-5 left-0 rounded-b bg-black/70 px-1.5 py-0.5 text-[10px] text-white">
-          {lockedBy!.userName} editing…
-        </span>
-      )}
-      {selectable && !lockedByOther && (
-        <button
-          onClick={onDelete}
-          disabled={deleting}
-          title="Delete"
-          className="absolute -top-5 right-0 hidden rounded bg-black/60 p-0.5 text-white group-hover:block disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <Trash2 className="size-3" />
-        </button>
-      )}
-      {selected &&
-        RESIZE_HANDLES.map((h) => (
-          <div
-            key={h.key}
-            onMouseDown={(e) => {
-              e.stopPropagation()
-              onHandleMouseDown(h.key, e)
-            }}
-            className={cn("absolute size-2 rounded-sm border border-white bg-brand", h.className)}
-            style={{ cursor: h.cursor }}
-          />
-        ))}
-    </div>
-  )
-}
-
-/** True while focus is in any text-entry field — inputs AND textareas (the
- *  comment box is a textarea, which `tagName === "INPUT"` alone never
- *  matches), plus contentEditable elements. Every global keyboard shortcut
- *  below must check this first, or things like Space/Backspace/Ctrl+Z leak
- *  through while the user is just typing a comment. */
-function isTypingInField(): boolean {
-  const el = document.activeElement as HTMLElement | null
-  return el?.tagName === "INPUT" || el?.tagName === "TEXTAREA" || !!el?.isContentEditable
-}
 
 export function AnnotationToolPage() {
   const { projectId, jobId } = useParams<{ projectId: string; jobId: string }>()
@@ -265,6 +101,10 @@ export function AnnotationToolPage() {
   const initialImageId = useRef(searchParams.get("image"))
   const workspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   const canvasRef = useRef<HTMLDivElement>(null)
+  // Tracks which image's annotations were most recently requested, so a
+  // slower, older fetch that resolves after a newer one can recognize
+  // it's stale and skip applying its (now-wrong) result.
+  const pendingImageIdRef = useRef<string | null>(null)
 
   const currentUser = useAuthStore((s) => s.user)
   const addToast = useToastStore((s) => s.addToast)
@@ -455,9 +295,25 @@ export function AnnotationToolPage() {
   // Each image's annotations are loaded fresh from the server when you page
   // to it — `annotations` in the store always holds just the current image's
   // set, kept live afterwards by the WS created/updated/deleted broadcasts.
+  //
+  // The image itself swaps instantly (just a src change), but this fetch is
+  // a real network round-trip — without clearing `annotations` first, the
+  // PREVIOUS image's boxes stayed rendered, now overlaid on the NEW image,
+  // until the fetch resolved and replaced them (often with none at all, if
+  // you'd paged to an unannotated image) — a flash of someone else's boxes
+  // on your image for however long the request took.
+  //
+  // pendingImageIdRef guards the reverse problem: paging quickly (several
+  // arrow presses before earlier requests land) fires overlapping fetches
+  // that can resolve out of order — without this, an older image's
+  // annotations could land last and overwrite the image you're actually on.
   useEffect(() => {
     if (!workspaceId || !projectId || !currentImage) return
-    listAnnotations(workspaceId, projectId, currentImage.id).then((rows) => {
+    const imageId = currentImage.id
+    pendingImageIdRef.current = imageId
+    setAnnotations([])
+    listAnnotations(workspaceId, projectId, imageId).then((rows) => {
+      if (pendingImageIdRef.current !== imageId) return
       setAnnotations(rows.map(toStoreAnnotation))
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -622,10 +478,17 @@ export function AnnotationToolPage() {
     setPendingClassName("")
     setPendingSelectedClassId(null)
     setSelectedAnnotationId(null)
+    // A switch triggered by leaving the image is already covered by the
+    // socket's own reconnect-cleanup (see useAnnotationSocket), but an
+    // in-place TOOL switch never closes that socket — without this, the
+    // lock from a still-open class editor stayed held (and "X editing…"
+    // kept showing to everyone else) even after the editor itself closed.
+    if (editingAnnotationId) releaseLock(editingAnnotationId)
     setEditingAnnotationId(null)
     setPendingComment(null)
     setCommentDraft("")
     setOpenCommentId(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentImage?.id, activeTool])
 
   // Undo/redo history and per-layer visibility are scoped to a single image.
@@ -650,9 +513,11 @@ export function AnnotationToolPage() {
         setPendingSelectedClassId(null)
       }
       if (e.key === "Escape" && editingAnnotationId) {
-        setEditingAnnotationId(null)
-        setPendingClassName("")
-        setPendingSelectedClassId(null)
+        // Releases the lock the editor acquired on open — previously this
+        // inlined the same three setState calls without releasing it, so
+        // canceling out of the editor with Escape left it showing "X
+        // editing…" to everyone else until the image/tool changed.
+        closeAnnotationEditor()
       }
       if (e.key === "Escape" && pendingComment) {
         setPendingComment(null)
@@ -926,6 +791,16 @@ export function AnnotationToolPage() {
   const unusedClasses = classes.filter((c) => !classCounts.get(c.id))
   const usedClasses = classes.filter((c) => classCounts.get(c.id))
 
+  async function handleRenameClass(classId: string, name: string) {
+    if (!workspaceId || !projectId) return
+    try {
+      const updated = await updateClass(workspaceId, projectId, classId, { name })
+      setClasses((prev) => prev.map((c) => (c.id === classId ? updated : c)))
+    } catch {
+      addToast({ variant: "error", title: "Couldn't rename class", description: "Please try again." })
+    }
+  }
+
   function goPrev() {
     setCurrentIndex((i) => Math.max(0, i - 1))
   }
@@ -1165,7 +1040,9 @@ export function AnnotationToolPage() {
       }
     } catch (err) {
       const status = (err as { response?: { status?: number } })?.response?.status
-      if (status !== 404) {
+      if (status === 409) {
+        addToast({ variant: "error", title: "Couldn't delete annotation", description: extractErrorMessage(err) })
+      } else if (status !== 404) {
         addToast({ variant: "error", title: "Couldn't delete annotation", description: "Please try again." })
       }
     } finally {
@@ -1440,9 +1317,15 @@ export function AnnotationToolPage() {
     setEditingAnnotationId(annotationId)
     setPendingClassName("")
     setPendingSelectedClassId(ann.classId)
+    // The drag/resize path already acquires a lock when it starts moving a
+    // box — this editor is a second, previously unguarded way to change an
+    // annotation (its class), so it needs the same signal, or a concurrent
+    // drag elsewhere could freely start on a box someone's mid-edit here.
+    acquireLock(annotationId)
   }
 
   function closeAnnotationEditor() {
+    if (editingAnnotationId) releaseLock(editingAnnotationId)
     setEditingAnnotationId(null)
     setPendingClassName("")
     setPendingSelectedClassId(null)
@@ -1459,8 +1342,13 @@ export function AnnotationToolPage() {
       await updateAnnotation(workspaceId, projectId, currentImage.id, editingAnnotationId, { classId })
       setActiveClassId(classId)
       closeAnnotationEditor()
-    } catch {
-      // ignore — no toast system yet
+    } catch (err) {
+      const status = (err as { response?: { status?: number } })?.response?.status
+      addToast({
+        variant: "error",
+        title: "Couldn't update the class",
+        description: status === 409 ? extractErrorMessage(err) : "Please try again.",
+      })
     } finally {
       setSavingPending(false)
     }
@@ -1571,6 +1459,13 @@ export function AnnotationToolPage() {
     if (activeTool !== "select") return
     e.stopPropagation()
     if (e.button !== 0) return
+    // Belt-and-suspenders on top of AnnotationBoxOverlay already not wiring
+    // up its mousedown handler when locked — this is the one place every
+    // drag actually starts from, so it's the safest single spot to also
+    // check the real lock state directly rather than trust every caller
+    // got the UI gating right.
+    const lock = locks[annotationId]
+    if (lock && lock.userId !== currentUser?.id) return
     const ann = annotations.find((a) => a.id === annotationId)
     if (!ann?.bbox) return
     setSelectedAnnotationId(annotationId)
@@ -1641,7 +1536,19 @@ export function AnnotationToolPage() {
                     after: override.bbox as unknown as Record<string, unknown>,
                   })
                 })
-                .catch(() => {})
+                .catch((err) => {
+                  // resizeOverride is already cleared below regardless of
+                  // outcome, so a failed save has already visually snapped
+                  // the box back to its last-committed position — this is
+                  // just telling the user WHY that happened instead of it
+                  // looking like their drag was silently ignored.
+                  const status = (err as { response?: { status?: number } })?.response?.status
+                  addToast({
+                    variant: "error",
+                    title: "Couldn't save the change",
+                    description: status === 409 ? extractErrorMessage(err) : "Please try again.",
+                  })
+                })
                 .finally(() => releaseLock(current.annotationId))
             } else {
               releaseLock(current.annotationId)
@@ -2210,21 +2117,14 @@ export function AnnotationToolPage() {
                   <p className="mb-1.5 text-xs font-semibold text-muted-foreground">Used Classes</p>
                   <div className="mb-3 flex flex-col gap-1">
                     {usedClasses.map((cls) => (
-                      <button
+                      <ClassRow
                         key={cls.id}
-                        onClick={() => setActiveClassId(cls.id)}
-                        className={cn(
-                          "flex items-center gap-2 rounded-md px-1.5 py-1 text-left text-xs hover:bg-accent",
-                          activeClassId === cls.id && "bg-accent"
-                        )}
-                      >
-                        <span
-                          className="size-2.5 shrink-0 rounded-sm"
-                          style={{ backgroundColor: cls.color }}
-                        />
-                        <span className="flex-1 truncate text-foreground">{cls.name}</span>
-                        <span className="text-xs text-muted-foreground">{classCounts.get(cls.id)}</span>
-                      </button>
+                        cls={cls}
+                        count={classCounts.get(cls.id)}
+                        active={activeClassId === cls.id}
+                        onSelect={() => setActiveClassId(cls.id)}
+                        onRename={(name) => handleRenameClass(cls.id, name)}
+                      />
                     ))}
                   </div>
                 </>
@@ -2235,20 +2135,14 @@ export function AnnotationToolPage() {
                   <p className="mb-1.5 text-xs font-semibold text-muted-foreground">Unused Classes</p>
                   <div className="mb-3 flex flex-col gap-1">
                     {unusedClasses.map((cls) => (
-                      <button
+                      <ClassRow
                         key={cls.id}
-                        onClick={() => setActiveClassId(cls.id)}
-                        className={cn(
-                          "flex items-center gap-2 rounded-md px-1.5 py-1 text-left text-xs hover:bg-accent",
-                          activeClassId === cls.id && "bg-accent"
-                        )}
-                      >
-                        <span
-                          className="size-2.5 shrink-0 rounded-sm"
-                          style={{ backgroundColor: cls.color }}
-                        />
-                        <span className="flex-1 truncate text-muted-foreground italic">{cls.name}</span>
-                      </button>
+                        cls={cls}
+                        muted
+                        active={activeClassId === cls.id}
+                        onSelect={() => setActiveClassId(cls.id)}
+                        onRename={(name) => handleRenameClass(cls.id, name)}
+                      />
                     ))}
                   </div>
                 </>

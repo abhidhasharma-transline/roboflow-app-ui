@@ -2,11 +2,12 @@ import { useEffect, useState } from "react"
 import { useParams, useNavigate, Link } from "react-router-dom"
 import { Mail, Check, X, CheckCircle2 } from "lucide-react"
 import { LogoMark } from "@/components/layout/Logo"
-import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { useAuthStore } from "@/stores/authStore"
 import { listMyInvitations, acceptInvitation, rejectInvitation } from "@/lib/workspaceApi"
+import { roleLabel } from "@/lib/userDisplay"
 import type { MyInvitation } from "@/types/workspace"
+import DetectionCanvas from "@/components/layout/DetectionCanvas"
 
 type ViewState =
   | { kind: "loading" }
@@ -62,34 +63,55 @@ export function InvitationAcceptPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-muted/40 px-4">
-      <Card className="w-full max-w-sm py-8">
-        <CardContent className="flex flex-col items-center gap-4 text-center">
-          <LogoMark className="size-10" />
+    <div className="min-h-screen bg-[#09090F] grid lg:grid-cols-[1.8fr_0.9fr]">
+
+      {/* LEFT */}
+      <div className="hidden lg:block">
+        <DetectionCanvas />
+      </div>
+
+      {/* RIGHT */}
+      <div className="flex items-center justify-center border-l border-white/5 bg-[#111118] px-8">
+        <div className="flex w-full max-w-[360px] flex-col items-center gap-4 text-center">
+          <div className="flex items-center gap-2">
+            <LogoMark className="h-8 w-8" />
+            <span className="text-lg font-semibold tracking-tight text-white">Annomaster</span>
+          </div>
 
           {state.kind === "loading" && (
-            <p className="text-sm text-muted-foreground">Loading invitation…</p>
+            <p className="text-sm text-zinc-400">Loading invitation…</p>
           )}
 
           {state.kind === "found" && (
             <>
-              <div className="flex size-11 items-center justify-center rounded-full bg-brand/15 text-brand">
+              <div className="flex size-11 items-center justify-center rounded-full bg-violet-600/15 text-violet-400">
                 <Mail className="size-5" />
               </div>
               <div>
-                <p className="font-medium text-foreground">
+                <p className="font-medium text-white">
                   You've been invited to join
                 </p>
-                <p className="text-lg font-semibold text-foreground">
+                <p className="text-lg font-semibold text-white">
                   {state.invite.workspace_name}
+                </p>
+                <p className="mt-1.5 text-sm text-zinc-400">
+                  Invited by <span className="text-zinc-200">{state.invite.invited_by_name}</span> as{" "}
+                  <span className="text-zinc-200">{roleLabel(state.invite.role)}</span>
                 </p>
               </div>
               <div className="flex w-full gap-2">
-                <Button variant="outline" className="flex-1" onClick={handleReject}>
+                <Button
+                  variant="outline"
+                  className="flex-1 border-white/10 bg-transparent text-white hover:bg-white/5"
+                  onClick={handleReject}
+                >
                   <X className="size-4" />
                   Decline
                 </Button>
-                <Button variant="brand" className="flex-1" onClick={handleAccept}>
+                <Button
+                  className="flex-1 bg-violet-600 hover:bg-violet-500"
+                  onClick={handleAccept}
+                >
                   <Check className="size-4" />
                   Accept
                 </Button>
@@ -99,9 +121,9 @@ export function InvitationAcceptPage() {
 
           {state.kind === "accepted" && (
             <>
-              <CheckCircle2 className="size-10 text-emerald-600" />
-              <p className="font-medium text-foreground">You're in!</p>
-              <Button variant="brand" asChild className="w-full">
+              <CheckCircle2 className="size-10 text-emerald-500" />
+              <p className="font-medium text-white">You're in!</p>
+              <Button asChild className="w-full bg-violet-600 hover:bg-violet-500">
                 <Link to="/workspace">Go to your workspaces</Link>
               </Button>
             </>
@@ -109,8 +131,12 @@ export function InvitationAcceptPage() {
 
           {state.kind === "rejected" && (
             <>
-              <p className="font-medium text-foreground">Invitation declined.</p>
-              <Button variant="outline" asChild className="w-full">
+              <p className="font-medium text-white">Invitation declined.</p>
+              <Button
+                asChild
+                variant="outline"
+                className="w-full border-white/10 bg-transparent text-white hover:bg-white/5"
+              >
                 <Link to="/workspace">Back to workspaces</Link>
               </Button>
             </>
@@ -118,24 +144,28 @@ export function InvitationAcceptPage() {
 
           {state.kind === "not-found" && (
             <>
-              <p className="font-medium text-foreground">
+              <p className="font-medium text-white">
                 This invitation isn't available.
               </p>
-              <p className="text-sm text-muted-foreground">
+              <p className="text-sm text-zinc-400">
                 It may have already been used, expired, or belongs to a
                 different account than the one you're signed in with.
               </p>
-              <Button variant="outline" asChild className="w-full">
+              <Button
+                asChild
+                variant="outline"
+                className="w-full border-white/10 bg-transparent text-white hover:bg-white/5"
+              >
                 <Link to="/workspace">Go to your workspaces</Link>
               </Button>
             </>
           )}
 
           {state.kind === "error" && (
-            <p className="text-sm text-destructive">{state.message}</p>
+            <p className="text-sm text-red-400">{state.message}</p>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   )
 }

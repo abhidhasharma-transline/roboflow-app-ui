@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { ImageIcon, Contrast, Shuffle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -146,30 +146,49 @@ export function ResizeDialog({
   const previewBg =
     mode === "fit_black_edges" ? "bg-black" : mode === "fit_white_edges" ? "bg-white" : "bg-muted"
 
+  // A raw CSS aspectRatio with no size cap lets a genuinely narrow target
+  // (e.g. 192x512 — a valid, real resize someone might type on the way to a
+  // different number) blow the box up to a huge sliver, since the div's
+  // width comes from its flex column and height then follows from that
+  // width divided by the ratio — a 640x512 column times a 0.06 ratio is
+  // thousands of pixels tall. Fitting width/height into a fixed max box
+  // (same approach as the Annotate tool's canvas-aspect fix) keeps the
+  // preview's true proportions visible without ever blowing up the layout.
+  const PREVIEW_MAX_WIDTH = 260
+  const PREVIEW_MAX_HEIGHT = 200
+  const previewBoxSize = useMemo(() => {
+    const ratio = width / height
+    let boxWidth = PREVIEW_MAX_WIDTH
+    let boxHeight = boxWidth / ratio
+    if (boxHeight > PREVIEW_MAX_HEIGHT) {
+      boxHeight = PREVIEW_MAX_HEIGHT
+      boxWidth = boxHeight * ratio
+    }
+    return { width: boxWidth, height: boxHeight }
+  }, [width, height])
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-4xl sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>Resize</DialogTitle>
         </DialogHeader>
-        <div className="grid grid-cols-[1fr_auto] gap-6">
-          <div className="space-y-3">
-            <div>
-              <p className="mb-1 text-xs text-muted-foreground">original</p>
-              <div className="aspect-video overflow-hidden rounded-md bg-muted">
-                {thumbnailUrl && <img src={thumbnailUrl} alt="" className="size-full object-contain" />}
-              </div>
+        <div className="grid grid-cols-[1fr_1fr_auto] items-start gap-6">
+          <div>
+            <p className="mb-1 text-xs text-muted-foreground">original</p>
+            <div className="aspect-video overflow-hidden rounded-md bg-muted">
+              {thumbnailUrl && <img src={thumbnailUrl} alt="" className="size-full object-contain" />}
             </div>
-            <div>
-              <p className="mb-1 text-xs text-muted-foreground">resized</p>
-              <div
-                className={`overflow-hidden rounded-md ${previewBg}`}
-                style={{ aspectRatio: `${width} / ${height}` }}
-              >
-                {thumbnailUrl && (
-                  <img src={thumbnailUrl} alt="" className="size-full" style={{ objectFit }} />
-                )}
-              </div>
+          </div>
+          <div>
+            <p className="mb-1 text-xs text-muted-foreground">resized</p>
+            <div
+              className={`mx-auto overflow-hidden rounded-md ${previewBg}`}
+              style={{ width: previewBoxSize.width, height: previewBoxSize.height }}
+            >
+              {thumbnailUrl && (
+                <img src={thumbnailUrl} alt="" className="size-full" style={{ objectFit }} />
+              )}
             </div>
           </div>
           <div className="w-64 space-y-4">

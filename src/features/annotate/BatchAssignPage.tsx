@@ -7,11 +7,12 @@ import {
   Users,
   User as UserIcon,
   Zap,
-  Building2,
   ChevronRight,
   Lock,
   List as ListIcon,
   LayoutGrid,
+  ChevronDown,
+  ChevronLeft,
   Tag,
   UserPlus,
   Trash2,
@@ -19,6 +20,7 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { ScrollToTopButton } from "@/components/shared/ScrollToTopButton"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
   Select,
@@ -115,6 +117,19 @@ export function BatchAssignPage() {
   const [createdAt, setCreatedAt] = useState<string | null>(null)
   const [images, setImages] = useState<BatchPreviewImage[]>([])
   const [imagesLoaded, setImagesLoaded] = useState(false)
+  const [page, setPage] = useState(0)
+  const [pageSize, setPageSize] = useState(50)
+  // The real count of unassigned images in the batch — fetchBatchPreview's
+  // own `counts.unannotated`, independent of pagination. `images` below is
+  // only ever the loaded PAGE of that (pageSize at a time) for browsing/
+  // selecting; using images.length as "how many images exist" here would be
+  // a real correctness bug, not just a display one — "Assign all unassigned
+  // images" sends this number as total_images to the backend
+  // (app/jobs/route.py's create_job), which LIMITs its unassigned-images
+  // query to it when no explicit image_ids are given. images.length capped
+  // at one page would silently create a job with only that page's images
+  // instead of everything actually unassigned.
+  const [unannotatedTotal, setUnannotatedTotal] = useState(0)
   const [search, setSearch] = useState("")
   const [filenameFilter, setFilenameFilter] = useState("")
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest")
@@ -198,7 +213,7 @@ export function BatchAssignPage() {
       } else {
         addToast({ variant: "success", title: "Images deleted", description: `${selectedIds.length} image(s)` })
       }
-      setImages((prev) => prev.filter((img) => !selectedIds.includes(img.id)))
+      refetchImages()
       setSelectedIds([])
     } finally {
       setDeletingSelected(false)
@@ -229,13 +244,22 @@ export function BatchAssignPage() {
 
   function refetchImages() {
     if (!workspaceId || !projectId || !batchId) return
-    fetchBatchPreview(workspaceId, projectId, batchId, { tab: "unannotated" }).then((res) => {
+    fetchBatchPreview(workspaceId, projectId, batchId, { tab: "unannotated", skip: page * pageSize, limit: pageSize }).then((res) => {
       setImages(res.images)
       setBatchName(res.batch_name)
+      setUnannotatedTotal(res.counts.unannotated)
     })
   }
 
-  const totalAvailable = images.length
+  function changePageSize(size: number) {
+    setPageSize(size)
+    setPage(0)
+  }
+
+  const totalAvailable = unannotatedTotal
+  const totalPages = Math.max(1, Math.ceil(unannotatedTotal / pageSize))
+  const rangeStart = unannotatedTotal === 0 ? 0 : page * pageSize + 1
+  const rangeEnd = Math.min(unannotatedTotal, (page + 1) * pageSize)
 
   const [screen, setScreen] = useState<Screen>("choose")
   const [assignScope, setAssignScope] = useState<"all" | "selected">("all")
@@ -243,15 +267,12 @@ export function BatchAssignPage() {
 
   const [starting, setStarting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
 
+  // Batch metadata only fires once per batch — separate from the paginated
+  // image fetch below so switching pages doesn't re-fetch these.
   useEffect(() => {
     if (!workspaceId || !projectId || !batchId) return
-
-    fetchBatchPreview(workspaceId, projectId, batchId, { tab: "unannotated" }).then((res) => {
-      setImages(res.images)
-      setBatchName(res.batch_name)
-      setImagesLoaded(true)
-    })
 
     getBatch(workspaceId, projectId, batchId)
       .then((b) => setCreatedAt(b.created_at))
@@ -259,6 +280,23 @@ export function BatchAssignPage() {
 
     listTags(workspaceId, projectId).then(setProjectTags).catch(() => {})
   }, [workspaceId, projectId, batchId])
+
+  // Switching batches resets back to page 1 — a stale page number from a
+  // previous, larger batch could point past the end of a smaller one.
+  useEffect(() => {
+    setPage(0)
+  }, [batchId])
+
+  useEffect(() => {
+    if (!workspaceId || !projectId || !batchId) return
+    setImagesLoaded(false)
+    fetchBatchPreview(workspaceId, projectId, batchId, { tab: "unannotated", skip: page * pageSize, limit: pageSize }).then((res) => {
+      setImages(res.images)
+      setBatchName(res.batch_name)
+      setUnannotatedTotal(res.counts.unannotated)
+      setImagesLoaded(true)
+    })
+  }, [workspaceId, projectId, batchId, page, pageSize])
 
   const filteredImages = useMemo(() => {
     let result = images
@@ -357,159 +395,166 @@ export function BatchAssignPage() {
   }
 
   return (
-    <div className="flex flex-1 overflow-hidden">
-      <div
-        className="flex-1 overflow-y-auto p-8"
-        onClick={(e) => {
-          if (e.target === e.currentTarget && selectedIds.length > 0) setSelectedIds([])
-        }}
-      >
-        <Link
-          to={`/projects/${projectId}/annotate`}
-          className="mb-1 flex items-center gap-1 text-xs font-medium tracking-wide text-muted-foreground uppercase hover:text-foreground"
-        >
-          <ArrowLeft className="size-3.5" />
-          Annotate
-        </Link>
-        <div className="mb-3 flex items-center justify-between">
-          <h1 className="text-2xl font-semibold text-foreground">Unassigned Images</h1>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              onClick={() => {
-                setRenameValue(batchName)
-                setRenameOpen(true)
-              }}
-            >
-              <Pencil className="size-4" />
-              Rename
-            </Button>
-            <Button variant="outline" onClick={() => setAddImagesOpen(true)}>
-              <Upload className="size-4" />
-              Upload More
-            </Button>
-          </div>
-        </div>
-        <div className="mb-5 flex items-center gap-2 text-xs text-muted-foreground">
-          <span className="rounded-full bg-muted px-2.5 py-1">Batch: {batchName || "Loading…"}</span>
-          {createdAt && (
-            <span className="rounded-full bg-muted px-2.5 py-1">
-              Uploaded{" "}
-              {new Date(createdAt).toLocaleDateString("en-US", {
-                month: "short",
-                day: "numeric",
-                year: "numeric",
-              })}
-            </span>
-          )}
-        </div>
-
-        <div className="relative mb-3 w-80">
-          <Search className="absolute top-2.5 left-2.5 size-4 text-muted-foreground" />
-          <Input
-            placeholder="Search images"
-            className="pl-8"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
-
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          <Input
-            placeholder="Filter by filename"
-            className="h-9 w-48 text-sm"
-            value={filenameFilter}
-            onChange={(e) => setFilenameFilter(e.target.value)}
-          />
-          <Select disabled>
-            <SelectTrigger className="h-9 w-28 text-sm">
-              <SelectValue placeholder="Split" />
-            </SelectTrigger>
-            <SelectContent />
-          </Select>
-          <Select disabled>
-            <SelectTrigger className="h-9 w-28 text-sm">
-              <SelectValue placeholder="Classes" />
-            </SelectTrigger>
-            <SelectContent />
-          </Select>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-9 w-28 justify-between text-sm font-normal">
-                Tags{tagFilterIds.length > 0 && ` (${tagFilterIds.length})`}
+    <div className="flex h-full flex-1 overflow-hidden">
+      <div className="flex h-full flex-1 flex-col overflow-hidden">
+        {/* Fixed — never scrolls, so the batch name/filters/pagination stay
+            put while only the image grid below moves. */}
+        <div className="shrink-0 px-8 pt-8">
+          <Link
+            to={`/projects/${projectId}/annotate`}
+            className="mb-1 flex items-center gap-1 text-xs font-medium tracking-wide text-muted-foreground uppercase hover:text-foreground"
+          >
+            <ArrowLeft className="size-3.5" />
+            Annotate
+          </Link>
+          <div className="mb-3 flex items-center justify-between">
+            <h1 className="text-2xl font-semibold text-foreground">Unassigned Images</h1>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setRenameValue(batchName)
+                  setRenameOpen(true)
+                }}
+              >
+                <Pencil className="size-4" />
+                Rename
               </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-56 p-2">
-              {projectTags.length === 0 ? (
-                <p className="px-2 py-1.5 text-sm text-muted-foreground">No tags yet</p>
-              ) : (
-                <>
-                  <div className="mb-1 flex items-center justify-between px-1">
-                    <button
-                      className="text-xs font-medium text-brand hover:underline"
-                      onClick={() => setTagFilterIds(projectTags.map((t) => t.id))}
-                    >
-                      Toggle All
-                    </button>
-                    <button
-                      className="text-xs font-medium text-muted-foreground hover:underline"
-                      onClick={() => setTagFilterIds([])}
-                    >
-                      Clear All
-                    </button>
-                  </div>
-                  {projectTags.map((tag) => (
-                    <label
-                      key={tag.id}
-                      className="flex items-center gap-2 rounded px-1 py-1.5 text-sm text-foreground hover:bg-accent"
-                    >
-                      <Checkbox
-                        checked={tagFilterIds.includes(tag.id)}
-                        onCheckedChange={() => toggleTagFilter(tag.id)}
-                      />
-                      {tag.name}
-                    </label>
-                  ))}
-                </>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <div className="flex items-center gap-1.5 text-sm">
-            <span className="text-muted-foreground">Sort By</span>
-            <Select value={sortOrder} onValueChange={(v) => setSortOrder(v as "newest" | "oldest")}>
-              <SelectTrigger className="h-9 w-32">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="newest">Newest</SelectItem>
-                <SelectItem value="oldest">Oldest</SelectItem>
-              </SelectContent>
-            </Select>
+              <Button variant="outline" onClick={() => setAddImagesOpen(true)}>
+                <Upload className="size-4" />
+                Upload More
+              </Button>
+            </div>
           </div>
-          <label className="ml-1 flex items-center gap-2 text-sm text-foreground">
-            <Checkbox checked={showAnnotations} onCheckedChange={(v) => setShowAnnotations(v === true)} />
-            Show Annotations
-          </label>
-          <div className="ml-auto flex items-center gap-1 rounded-md border border-border p-0.5">
-            <button
-              onClick={() => setViewMode("list")}
-              className={`rounded p-1.5 ${viewMode === "list" ? "bg-muted" : "text-muted-foreground"}`}
-              title="List view"
-            >
-              <ListIcon className="size-4" />
-            </button>
-            <button
-              onClick={() => setViewMode("grid")}
-              className={`rounded p-1.5 ${
-                viewMode === "grid" ? "bg-brand text-brand-foreground" : "text-muted-foreground"
-              }`}
-              title="Grid view"
-            >
-              <LayoutGrid className="size-4" />
-            </button>
+          <div className="mb-5 flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="rounded-full bg-muted px-2.5 py-1">Batch: {batchName || "Loading…"}</span>
+            {createdAt && (
+              <span className="rounded-full bg-muted px-2.5 py-1">
+                Uploaded{" "}
+                {new Date(createdAt).toLocaleDateString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                })}
+              </span>
+            )}
+          </div>
+
+          <div className="relative mb-3 w-80">
+            <Search className="absolute top-2.5 left-2.5 size-4 text-muted-foreground" />
+            <Input
+              placeholder="Search images"
+              className="pl-8"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <Input
+              placeholder="Filter by filename"
+              className="h-9 w-48 text-sm"
+              value={filenameFilter}
+              onChange={(e) => setFilenameFilter(e.target.value)}
+            />
+            <Select disabled>
+              <SelectTrigger className="h-9 w-28 text-sm">
+                <SelectValue placeholder="Split" />
+              </SelectTrigger>
+              <SelectContent />
+            </Select>
+            <Select disabled>
+              <SelectTrigger className="h-9 w-28 text-sm">
+                <SelectValue placeholder="Classes" />
+              </SelectTrigger>
+              <SelectContent />
+            </Select>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="h-9 w-28 justify-between text-sm font-normal">
+                  Tags{tagFilterIds.length > 0 && ` (${tagFilterIds.length})`}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-56 p-2">
+                {projectTags.length === 0 ? (
+                  <p className="px-2 py-1.5 text-sm text-muted-foreground">No tags yet</p>
+                ) : (
+                  <>
+                    <div className="mb-1 flex items-center justify-between px-1">
+                      <button
+                        className="text-xs font-medium text-brand hover:underline"
+                        onClick={() => setTagFilterIds(projectTags.map((t) => t.id))}
+                      >
+                        Toggle All
+                      </button>
+                      <button
+                        className="text-xs font-medium text-muted-foreground hover:underline"
+                        onClick={() => setTagFilterIds([])}
+                      >
+                        Clear All
+                      </button>
+                    </div>
+                    {projectTags.map((tag) => (
+                      <label
+                        key={tag.id}
+                        className="flex items-center gap-2 rounded px-1 py-1.5 text-sm text-foreground hover:bg-accent"
+                      >
+                        <Checkbox
+                          checked={tagFilterIds.includes(tag.id)}
+                          onCheckedChange={() => toggleTagFilter(tag.id)}
+                        />
+                        {tag.name}
+                      </label>
+                    ))}
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <div className="flex items-center gap-1.5 text-sm">
+              <span className="text-muted-foreground">Sort By</span>
+              <Select value={sortOrder} onValueChange={(v) => setSortOrder(v as "newest" | "oldest")}>
+                <SelectTrigger className="h-9 w-32">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="newest">Newest</SelectItem>
+                  <SelectItem value="oldest">Oldest</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <label className="ml-1 flex items-center gap-2 text-sm text-foreground">
+              <Checkbox checked={showAnnotations} onCheckedChange={(v) => setShowAnnotations(v === true)} />
+              Show Annotations
+            </label>
+            <div className="ml-auto flex items-center gap-1 rounded-md border border-border p-0.5">
+              <button
+                onClick={() => setViewMode("list")}
+                className={`rounded p-1.5 ${viewMode === "list" ? "bg-muted" : "text-muted-foreground"}`}
+                title="List view"
+              >
+                <ListIcon className="size-4" />
+              </button>
+              <button
+                onClick={() => setViewMode("grid")}
+                className={`rounded p-1.5 ${
+                  viewMode === "grid" ? "bg-brand text-brand-foreground" : "text-muted-foreground"
+                }`}
+                title="Grid view"
+              >
+                <LayoutGrid className="size-4" />
+              </button>
+            </div>
           </div>
         </div>
 
+        {/* Only this pane scrolls. */}
+        <div
+          ref={scrollRef}
+          className="relative flex-1 overflow-y-auto px-8 pb-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && selectedIds.length > 0) setSelectedIds([])
+          }}
+        >
         {!imagesLoaded ? (
           <p className="py-16 text-center text-sm text-muted-foreground">Loading images…</p>
         ) : filteredImages.length === 0 ? (
@@ -519,13 +564,16 @@ export function BatchAssignPage() {
             className={
               viewMode === "grid"
                 ? "grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6"
-                : "flex flex-col gap-2"
+                : "grid grid-cols-1 gap-3 xl:grid-cols-2"
             }
           >
             {filteredImages.map((img) => {
               const selected = selectedIds.includes(img.id)
               return viewMode === "grid" ? (
-                <div key={img.id} className="group relative flex flex-col gap-1.5">
+                <div
+                  key={img.id}
+                  className="group relative flex flex-col gap-1.5 [content-visibility:auto] [contain-intrinsic-size:0_220px]"
+                >
                   <div
                     onClick={() => handleImageCardClick(img.id)}
                     className={`relative aspect-[4/3] overflow-hidden rounded-md border bg-muted ${
@@ -554,25 +602,89 @@ export function BatchAssignPage() {
                 <div
                   key={img.id}
                   onClick={() => toggleSelect(img.id)}
-                  className={`flex cursor-pointer items-center gap-3 rounded-md border p-2 ${
+                  className={`flex cursor-pointer items-center gap-4 rounded-md border p-3 [content-visibility:auto] [contain-intrinsic-size:0_92px] ${
                     selected ? "border-brand bg-brand/5" : "border-border"
                   }`}
                 >
-                  <Checkbox checked={selected} />
-                  <div className="size-10 shrink-0 overflow-hidden rounded bg-muted">
-                    {img.thumbnail_url && (
+                  <Checkbox checked={selected} onClick={(e) => e.stopPropagation()} onCheckedChange={() => toggleSelect(img.id)} />
+                  <div className="size-14 shrink-0 overflow-hidden rounded bg-muted">
+                    {img.thumbnail_url ? (
                       <img src={img.thumbnail_url} alt={img.filename} className="size-full object-cover" />
+                    ) : (
+                      <div className="flex size-full items-center justify-center text-[10px] text-muted-foreground">
+                        Processing…
+                      </div>
                     )}
                   </div>
-                  <p className="truncate text-sm text-foreground">{img.filename}</p>
+                  <div className="flex min-w-0 flex-1 flex-col gap-1 text-xs">
+                    <p className="truncate text-foreground">
+                      <span className="font-semibold text-muted-foreground">FILENAME:</span>{" "}
+                      <span title={img.filename}>{img.filename}</span>
+                    </p>
+                    <p className="flex items-center gap-1 text-foreground">
+                      <span className="font-semibold text-muted-foreground">ANNOTATIONS:</span>{" "}
+                      {img.annotation_count > 0 ? `${img.annotation_count} Total` : "n/a Total"}
+                      <span
+                        className="ml-1 flex items-center gap-0.5 italic text-muted-foreground"
+                        title={img.class_names.join(", ")}
+                      >
+                        {img.class_names.length > 0 ? img.class_names.join(", ") : "N/A CLASSES"}
+                        <ChevronDown className="size-3" />
+                      </span>
+                    </p>
+                    <p className="text-foreground">
+                      <span className="font-semibold text-muted-foreground">TAGS:</span> {img.tags.length} Total
+                    </p>
+                  </div>
                 </div>
               )
             })}
           </div>
         )}
+        <ScrollToTopButton containerRef={scrollRef} />
+        </div>
+
+        {/* Fixed footer — pagination stays put instead of moving with the grid. */}
+        {imagesLoaded && unannotatedTotal > 0 && (
+          <div className="shrink-0 flex items-center justify-between border-t border-border px-8 py-4">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <span>Per page:</span>
+              <Select value={String(pageSize)} onValueChange={(v) => changePageSize(Number(v))}>
+                <SelectTrigger className="h-8 w-20">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="10">10</SelectItem>
+                  <SelectItem value="25">25</SelectItem>
+                  <SelectItem value="50">50</SelectItem>
+                  <SelectItem value="100">100</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              {rangeStart} - {rangeEnd} of {unannotatedTotal}
+            </p>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+                disabled={page === 0}
+                className="rounded-md border border-border p-1.5 text-muted-foreground hover:text-foreground disabled:opacity-40"
+              >
+                <ChevronLeft className="size-4" />
+              </button>
+              <button
+                onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                disabled={page >= totalPages - 1}
+                className="rounded-md border border-border p-1.5 text-muted-foreground hover:text-foreground disabled:opacity-40"
+              >
+                <ChevronRight className="size-4" />
+              </button>
+            </div>
+          </div>
+        )}
 
         {imagesLoaded && filteredImages.length > 0 && (
-          <div className="sticky bottom-0 mt-6 flex items-center gap-3 rounded-lg border border-brand/30 bg-background p-3 shadow-sm">
+          <div className="shrink-0 mx-8 mb-4 flex items-center gap-3 rounded-lg border border-brand/30 bg-background p-3 shadow-sm">
             <Checkbox checked={allVisibleSelected} onCheckedChange={toggleSelectAll} />
             <span className="text-sm text-foreground">{selectedIds.length} images selected</span>
             <Button
@@ -615,13 +727,6 @@ export function BatchAssignPage() {
             </h2>
             <div className="flex flex-col gap-3">
               <OptionCard
-                icon={Zap}
-                title="Auto-Label And Review"
-                description="Create a first pass across the batch, then review or edit anything before adding it."
-                badge="Fastest"
-                disabled
-              />
-              <OptionCard
                 icon={UserIcon}
                 title="Label Manually"
                 description={starting ? "Creating job…" : "Create each label yourself, one image at a time."}
@@ -637,14 +742,6 @@ export function BatchAssignPage() {
                   setAssignScope("all")
                   setScreen("team")
                 }}
-              />
-              <OptionCard
-                icon={Building2}
-                title="Hire Outsourced Labelers"
-                description="Work with a professional labeling team."
-                badge="Upgrade"
-                badgeVariant="upgrade"
-                disabled
               />
             </div>
             {error && <p className="mt-3 text-sm text-destructive">{error}</p>}

@@ -18,11 +18,12 @@ export async function uploadImages(
   workspaceId: string,
   projectId: string,
   files: File[],
-  opts: { batchName: string; tagNames: string[]; folderName?: string },
+  opts: { batchName: string; tagNames: string[]; folderName?: string; labelFiles?: File[] },
   onProgress?: (percent: number) => void
 ): Promise<UploadImagesResponse> {
   const form = new FormData()
   files.forEach((file) => form.append("files", file))
+  ;(opts.labelFiles ?? []).forEach((file) => form.append("label_files", file))
   form.append("batch_name", opts.batchName)
   form.append("tag_names", opts.tagNames.join(","))
   form.append("folder_name", opts.folderName ?? "")
@@ -38,6 +39,98 @@ export async function uploadImages(
     }
   )
   return res.data
+}
+
+// A single multipart request carrying hundreds-to-thousands of files at
+// once is fragile — one dropped connection loses the whole thing, and the
+// backend buffers every file's bytes in memory before any of it is
+// persisted (app/upload/service.py's upload_images/append_images both read
+// every UploadFile fully before touching storage). Splitting into
+// fixed-size requests bounds both the per-request memory footprint and the
+// blast radius of a network hiccup — earlier chunks are already committed
+// server-side by the time a later one might fail.
+const UPLOAD_CHUNK_SIZE = 100
+
+/**
+ * Uploads a large file selection in bounded-size chunks instead of one huge
+ * request: the first chunk creates the batch (uploadImages), every
+ * following chunk appends to it (appendImagesToBatch) — same batch_id
+ * throughout. Progress and result counts are aggregated across all chunks
+ * so callers see one continuous 0-100 progress bar and one combined
+ * UploadImagesResponse, same shape as a plain uploadImages() call.
+ */
+export async function uploadImagesChunked(
+  workspaceId: string,
+  projectId: string,
+  files: File[],
+  opts: { batchName: string; tagNames: string[]; folderName?: string; labelFiles?: File[] },
+  onProgress?: (percent: number, currentFile?: string) => void
+): Promise<UploadImagesResponse> {
+  const chunks: File[][] = []
+  for (let i = 0; i < files.length; i += UPLOAD_CHUNK_SIZE) {
+    chunks.push(files.slice(i, i + UPLOAD_CHUNK_SIZE))
+  }
+
+  let batchId = ""
+  let batchName = ""
+  let sourceType: UploadImagesResponse["source_type"] = "images"
+  let saved = 0
+  let duplicates = 0
+  const duplicateFilenames: string[] = []
+  let imagesAnnotated = 0
+  let annotationsImported = 0
+  const errors: UploadImagesResponse["errors"] = []
+  let completedFiles = 0
+  const totalFiles = files.length || 1
+
+  // axios only reports byte-progress for the request as a whole, not which
+  // file within a 100-file chunk is currently in flight — but multipart
+  // fields are sent in the order they were appended, so the fraction of
+  // bytes sent so far is still a reasonable estimate of which file that is.
+  // Good enough to show "processing X" the way Roboflow's own upload screen
+  // does, without needing one request per file (which would defeat the
+  // whole point of chunking).
+  function reportProgress(chunk: File[], chunkPercent: number) {
+    if (!onProgress) return
+    const withinChunk = (chunk.length * chunkPercent) / 100
+    const overallPercent = Math.min(100, Math.round(((completedFiles + withinChunk) / totalFiles) * 100))
+    const fileIndex = Math.min(chunk.length - 1, Math.floor(withinChunk))
+    onProgress(overallPercent, chunk[fileIndex]?.name)
+  }
+
+  for (const chunk of chunks) {
+    // label_files (annotations + classes.txt/data.yaml) are matched by
+    // filename stem against whichever images are IN that specific request
+    // (see app/upload/service.py's _import_yolo_annotations) — sending the
+    // full set with every chunk is simplest and correct: each chunk's call
+    // only ever matches the labels for the images it actually contains.
+    const res =
+      batchId === ""
+        ? await uploadImages(workspaceId, projectId, chunk, opts, (p) => reportProgress(chunk, p))
+        : await appendImagesToBatch(
+            workspaceId, projectId, batchId, chunk, opts.folderName,
+            (p) => reportProgress(chunk, p), opts.labelFiles
+          )
+
+    if (batchId === "") {
+      batchId = res.batch_id
+      batchName = res.batch_name
+      sourceType = res.source_type
+    }
+    saved += res.saved
+    duplicates += res.duplicates
+    duplicateFilenames.push(...res.duplicate_filenames)
+    imagesAnnotated += res.images_annotated
+    annotationsImported += res.annotations_imported
+    errors.push(...res.errors)
+    completedFiles += chunk.length
+  }
+
+  return {
+    batch_id: batchId, batch_name: batchName, source_type: sourceType,
+    saved, duplicates, duplicate_filenames: duplicateFilenames, errors, total: saved + duplicates,
+    images_annotated: imagesAnnotated, annotations_imported: annotationsImported,
+  }
 }
 
 /** POST /upload/video/initiate — step 1 of 2 for video upload. */
@@ -164,10 +257,12 @@ export async function appendImagesToBatch(
   batchId: string,
   files: File[],
   folderName?: string,
-  onProgress?: (percent: number) => void
+  onProgress?: (percent: number) => void,
+  labelFiles?: File[]
 ): Promise<UploadImagesResponse> {
   const form = new FormData()
   files.forEach((file) => form.append("files", file))
+  ;(labelFiles ?? []).forEach((file) => form.append("label_files", file))
   form.append("folder_name", folderName ?? "")
 
   const res = await api.post<UploadImagesResponse>(

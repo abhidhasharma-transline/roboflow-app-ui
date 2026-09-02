@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from "react"
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react"
 import { Search, Plus, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -14,9 +14,22 @@ import {
 import { InstructionsEditor } from "@/components/shared/InstructionsEditor"
 import { listProjectMembers, addProjectMember } from "@/lib/projectApi"
 import { listWorkspaceMembers, listWorkspaceInvitations } from "@/lib/workspaceApi"
-import { fullName, initials } from "@/lib/userDisplay"
+import { fullName, initials, roleLabel } from "@/lib/userDisplay"
+import { effectivePermissions } from "@/lib/permissions"
 import type { ProjectMember } from "@/types/project"
 import type { WorkspaceMember, WorkspaceInvitation } from "@/types/workspace"
+import type { WorkspaceRole } from "@/types/auth"
+
+/** Who's even eligible to be assigned annotation work — not just members
+ *  literally stored as role "labeler". Admins have `annotate: true` by
+ *  default too (same as any role, it's all customizable via
+ *  permission_overrides), and a super admin bypasses the permission system
+ *  entirely, so both need to be selectable here, not just labelers. */
+function canAnnotate(m: ProjectMember): boolean {
+  if (m.is_super_admin) return true
+  if (m.role === "super_admin") return true
+  return effectivePermissions(m.role as WorkspaceRole, m.permission_overrides).annotate
+}
 
 function Label({ children }: { children: React.ReactNode }) {
   return <p className="text-sm font-medium text-foreground">{children}</p>
@@ -66,7 +79,7 @@ function AddTeamMemberDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Add team members</DialogTitle>
+          <DialogTitle>Add a labeler from your workspace</DialogTitle>
           <DialogDescription>
             Anyone in your workspace can be added as a labeler for this project.
           </DialogDescription>
@@ -154,6 +167,10 @@ export const AssignTeamFields = forwardRef<AssignTeamFieldsHandle, AssignTeamFie
     ref
   ) {
     const [totalToAssign, setTotalToAssign] = useState(initialTotalToAssign ?? totalAvailable)
+    // What the field displays while typing — kept separate from totalToAssign
+    // so clearing the box to retype a number doesn't get clamped back to 1
+    // mid-edit (Number("") is 0, which clampTotal snaps to the minimum).
+    const [totalText, setTotalText] = useState(String(totalToAssign))
     const [shuffle, setShuffle] = useState(initialShuffle)
     const [instructions, setInstructions] = useState(initialInstructions)
     const [instructionsOpen, setInstructionsOpen] = useState(Boolean(initialInstructions))
@@ -167,10 +184,15 @@ export const AssignTeamFields = forwardRef<AssignTeamFieldsHandle, AssignTeamFie
     const [addMemberOpen, setAddMemberOpen] = useState(false)
 
     useEffect(() => {
-      listProjectMembers(workspaceId, projectId, "labeler")
+      // Unfiltered — "labeler" role isn't the actual eligibility test (an
+      // Admin has annotate:true by default too, and a super admin bypasses
+      // permissions outright), so filter by real annotate capability instead
+      // of the raw stored role. See canAnnotate() above.
+      listProjectMembers(workspaceId, projectId)
         .then((rows) => {
-          setLabelers(rows)
-          setSelectedLabelerIds(initialSelectedLabelerIds ?? rows.map((m) => m.user_id))
+          const eligible = rows.filter(canAnnotate)
+          setLabelers(eligible)
+          setSelectedLabelerIds(initialSelectedLabelerIds ?? eligible.map((m) => m.user_id))
         })
         .catch(() => {})
 
@@ -180,6 +202,43 @@ export const AssignTeamFields = forwardRef<AssignTeamFieldsHandle, AssignTeamFie
 
     function clampTotal(n: number) {
       return Math.max(1, Math.min(totalAvailable || 1, n || 1))
+    }
+
+    // Keeps the text box showing whatever totalToAssign becomes when it
+    // changes from elsewhere (the slider, or the auto-bump below) — but not
+    // on every keystroke, since typing updates totalToAssign directly too
+    // and re-deriving the string from it would fight an in-progress edit
+    // (e.g. drop a leading zero, or refill a box the user just cleared).
+    useEffect(() => {
+      setTotalText(String(totalToAssign))
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [totalToAssign])
+
+    // If more images get uploaded to the batch while this panel is open,
+    // "assign all" should track the new total rather than silently staying
+    // capped at whatever was available when the panel first mounted — but
+    // only when the field was actually at the old max; a total the user
+    // deliberately typed in stays exactly what they typed.
+    const prevTotalAvailableRef = useRef(totalAvailable)
+    useEffect(() => {
+      if (totalToAssign === prevTotalAvailableRef.current && totalAvailable !== prevTotalAvailableRef.current) {
+        setTotalToAssign(totalAvailable)
+      }
+      prevTotalAvailableRef.current = totalAvailable
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [totalAvailable])
+
+    function handleTotalTextChange(raw: string) {
+      if (raw !== "" && !/^\d+$/.test(raw)) return
+      setTotalText(raw)
+      if (raw !== "") {
+        const parsed = Number(raw)
+        if (Number.isFinite(parsed)) setTotalToAssign(parsed)
+      }
+    }
+
+    function commitTotalText() {
+      setTotalToAssign((prev) => clampTotal(totalText === "" ? prev : Number(totalText)))
     }
 
     function toggleLabeler(userId: string) {
@@ -222,11 +281,15 @@ export const AssignTeamFields = forwardRef<AssignTeamFieldsHandle, AssignTeamFie
             <Label>Total Images to Assign</Label>
             <div className="mt-1.5 flex items-center gap-3">
               <Input
-                type="number"
-                min={1}
-                max={totalAvailable}
-                value={totalToAssign}
-                onChange={(e) => setTotalToAssign(clampTotal(Number(e.target.value)))}
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={totalText}
+                onChange={(e) => handleTotalTextChange(e.target.value)}
+                onBlur={commitTotalText}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") e.currentTarget.blur()
+                }}
                 className="h-9 w-20"
               />
               <span className="text-sm text-muted-foreground">/ {totalAvailable}</span>
@@ -309,6 +372,9 @@ export const AssignTeamFields = forwardRef<AssignTeamFieldsHandle, AssignTeamFie
                   <p className="truncate text-sm font-medium text-foreground">{fullName(m)}</p>
                   <p className="truncate text-xs text-muted-foreground">{m.email}</p>
                 </div>
+                <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                  {roleLabel(m.is_super_admin ? "super_admin" : m.role)}
+                </span>
                 {selected && (
                   <span className="shrink-0 rounded-full bg-brand px-2 py-0.5 text-xs font-medium text-brand-foreground">
                     {distribution[m.user_id] ?? 0} images

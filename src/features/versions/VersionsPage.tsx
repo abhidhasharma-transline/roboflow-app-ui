@@ -41,6 +41,21 @@ const EXTRA_PREPROCESSING_LABELS: Record<"grayscale" | "auto_contrast" | "random
 
 type StepNum = 1 | 2 | 3 | 4 | 5
 
+// Matches Roboflow's own default: a timestamp shown as a placeholder (not a
+// pre-filled value) — the field starts empty and this is just the name that
+// gets used if the user never types their own.
+function defaultVersionName() {
+  const now = new Date()
+  const y = now.getFullYear()
+  const m = String(now.getMonth() + 1).padStart(2, "0")
+  const d = String(now.getDate()).padStart(2, "0")
+  let h = now.getHours()
+  const ampm = h >= 12 ? "pm" : "am"
+  h = h % 12 || 12
+  const min = String(now.getMinutes()).padStart(2, "0")
+  return `${y}-${m}-${d} ${h}:${min}${ampm}`
+}
+
 const SPLIT_META = {
   train: { label: "Train", icon: Activity, className: "bg-brand text-brand-foreground" },
   valid: { label: "Valid", icon: ShieldCheck, className: "bg-blue-500 text-white" },
@@ -81,6 +96,7 @@ export function VersionsPage() {
 
   const [step, setStep] = useState<StepNum>(1)
   const [versionName, setVersionName] = useState("")
+  const [versionNamePlaceholder, setVersionNamePlaceholder] = useState(defaultVersionName)
   const [versionNote, setVersionNote] = useState("")
   const [creating, setCreating] = useState(false)
 
@@ -142,26 +158,37 @@ export function VersionsPage() {
 
   useEffect(refetchVersions, [workspaceId, projectId])
   useEffect(refetchSource, [workspaceId, projectId])
-  useEffect(() => {
-    setVersionName(`v${versions.length + 1}`)
-  }, [versions.length])
+
+  // Full reset for the wizard — called whenever "Create New Version" is
+  // clicked, so re-clicking it always lands on a visibly fresh step 1
+  // instead of silently reusing whatever step/name was left over from a
+  // previous, abandoned attempt (confusing — looked like the click did
+  // nothing).
+  function resetVersionWizard() {
+    setStep(1)
+    setVersionName("")
+    setVersionNamePlaceholder(defaultVersionName())
+    setVersionNote("")
+    setPreprocessing({ auto_orient: true, resize: { mode: "stretch", width: 640, height: 512 } })
+    setAugmentations({})
+  }
 
   async function handleCreate() {
-    if (!workspaceId || !projectId || !versionName.trim() || creating) return
+    if (!workspaceId || !projectId || creating) return
+    const resolvedName = versionName.trim() || versionNamePlaceholder
     setCreating(true)
     try {
       const augmentationsPayload = Object.fromEntries(
         Object.entries(augmentations).map(([id, aug]) => [id, { label: aug.label }])
       )
       const created = await createVersion(workspaceId, projectId, {
-        name: versionName.trim(),
+        name: resolvedName,
         note: versionNote.trim() || undefined,
         preprocessing,
         augmentations: augmentationsPayload,
       })
-      addToast({ variant: "success", title: "Version created", description: versionName.trim() })
-      setVersionNote("")
-      setStep(1)
+      addToast({ variant: "success", title: "Version created", description: resolvedName })
+      resetVersionWizard()
       setVersions((prev) => [created, ...prev])
       setSelectedVersionId(created.id)
     } catch (err) {
@@ -179,7 +206,13 @@ export function VersionsPage() {
     <div className="flex flex-1 flex-col overflow-hidden">
       <div className="flex shrink-0 items-center justify-between border-b border-border bg-foreground px-6 py-4">
         <span className="text-lg font-semibold text-background">Versions</span>
-        <Button variant="brand" onClick={() => setSelectedVersionId(null)}>
+        <Button
+          variant="brand"
+          onClick={() => {
+            resetVersionWizard()
+            setSelectedVersionId(null)
+          }}
+        >
           <Plus className="size-4" />
           Create New Version
         </Button>
@@ -228,7 +261,6 @@ export function VersionsPage() {
         <VersionDetailView
           workspaceId={workspaceId}
           projectId={projectId}
-          projectName={project?.name ?? "dataset"}
           version={selectedVersion}
           annotationType={project?.annotation_type ?? "object_detection"}
           onRenamed={(updated) => {
@@ -236,6 +268,7 @@ export function VersionsPage() {
           }}
           onDeleted={() => {
             setVersions((prev) => prev.filter((v) => v.id !== selectedVersionId))
+            resetVersionWizard()
             setSelectedVersionId(null)
           }}
         />
@@ -255,7 +288,11 @@ export function VersionsPage() {
 
         <div className="mb-6 max-w-md">
           <label className="mb-1.5 block text-sm font-medium text-foreground">Version Name</label>
-          <Input value={versionName} onChange={(e) => setVersionName(e.target.value)} />
+          <Input
+            value={versionName}
+            onChange={(e) => setVersionName(e.target.value)}
+            placeholder={versionNamePlaceholder}
+          />
         </div>
 
         <div className="flex flex-col">
@@ -587,7 +624,7 @@ export function VersionsPage() {
                   />
                   <div className="flex gap-2">
                     <Button variant="outline" onClick={() => setStep(4)} disabled={creating}>Back</Button>
-                    <Button variant="brand" onClick={handleCreate} disabled={creating || !versionName.trim()}>
+                    <Button variant="brand" onClick={handleCreate} disabled={creating}>
                       {creating ? "Creating…" : "Create"}
                     </Button>
                   </div>

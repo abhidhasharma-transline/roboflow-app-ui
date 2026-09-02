@@ -118,9 +118,20 @@ export function ProjectSidebar() {
     }
   }
 
+  // A Reviewer's job is reviewing, not assigning/managing annotation work —
+  // every action on the Annotate board (upload-into-batch aside) is exactly
+  // that, so it's hidden rather than left reachable-but-403ing on every
+  // click. Defaults to visible while my_permissions hasn't loaded yet (or
+  // for a role that isn't scoped at all here, e.g. workspace-level admins
+  // browsing before project access resolves) — only an explicit `false`
+  // hides it.
+  const canAnnotate = project?.my_permissions?.annotate !== false
+
   const dataItems: SubNavItem[] = [
     { label: "Upload Data", icon: Upload, path: `/projects/${projectId}/upload` },
-    { label: "Annotate", icon: ImageIcon, path: `/projects/${projectId}/annotate` },
+    ...(canAnnotate
+      ? [{ label: "Annotate", icon: ImageIcon, path: `/projects/${projectId}/annotate` }]
+      : []),
     {
       label: "Dataset",
       icon: Database,

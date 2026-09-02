@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { ImageIcon, ArrowLeft, User, Maximize2, X, ChevronLeft, ChevronRight } from "lucide-react"
 import { Dialog, DialogContent } from "@/components/ui/dialog"
+import { Button } from "@/components/ui/button"
+import { ScrollToTopButton } from "@/components/shared/ScrollToTopButton"
 import { useWorkspaceStore } from "@/stores/workspaceStore"
 import { listVersions, getVersionImages, type ProjectVersion, type VersionImageSummary } from "@/lib/versionApi"
+import { objectCoverViewBox } from "@/lib/thumbnailGeometry"
 
 const RESIZE_MODE_LABELS: Record<string, string> = {
   stretch: "Stretch to",
@@ -15,11 +18,16 @@ const RESIZE_MODE_LABELS: Record<string, string> = {
 }
 
 const SPLIT_TABS = ["train", "valid", "test"] as const
+const PAGE_SIZE = 60
 
-function ThumbAnnotations({ img }: { img: VersionImageSummary }) {
+function ThumbAnnotations({ img, containerAspect }: { img: VersionImageSummary; containerAspect: number }) {
   if (img.annotations.length === 0) return null
   return (
-    <svg className="pointer-events-none absolute inset-0 size-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+    <svg
+      className="pointer-events-none absolute inset-0 size-full"
+      viewBox={objectCoverViewBox(img.width, img.height, containerAspect)}
+      preserveAspectRatio="none"
+    >
       {img.annotations.map((a, i) =>
         a.shape_type === "bbox" ? (
           <rect
@@ -57,8 +65,10 @@ export function VersionImagesPage() {
   const [loadingVersions, setLoadingVersions] = useState(true)
   const [images, setImages] = useState<VersionImageSummary[]>([])
   const [loadingImages, setLoadingImages] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [activeTab, setActiveTab] = useState<(typeof SPLIT_TABS)[number]>("train")
   const [previewIndex, setPreviewIndex] = useState<number | null>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!workspaceId || !projectId) return
@@ -66,13 +76,25 @@ export function VersionImagesPage() {
     listVersions(workspaceId, projectId).then(setVersions).finally(() => setLoadingVersions(false))
   }, [workspaceId, projectId])
 
+  // A version can hold thousands of images — fetch only the active tab's
+  // split, one page at a time (getVersionImages is now paginated server-
+  // side), instead of pulling every image in the version on every load.
   useEffect(() => {
     if (!workspaceId || !projectId || !versionId) return
     setLoadingImages(true)
-    getVersionImages(workspaceId, projectId, versionId)
+    setImages([])
+    getVersionImages(workspaceId, projectId, versionId, { split: activeTab, skip: 0, limit: PAGE_SIZE })
       .then((res) => setImages(res.items))
       .finally(() => setLoadingImages(false))
-  }, [workspaceId, projectId, versionId])
+  }, [workspaceId, projectId, versionId, activeTab])
+
+  function loadMoreImages() {
+    if (!workspaceId || !projectId || !versionId || loadingMore) return
+    setLoadingMore(true)
+    getVersionImages(workspaceId, projectId, versionId, { split: activeTab, skip: images.length, limit: PAGE_SIZE })
+      .then((res) => setImages((prev) => [...prev, ...res.items]))
+      .finally(() => setLoadingMore(false))
+  }
 
   const ordinals = useMemo(() => {
     const ascending = [...versions].sort((a, b) => a.created_at.localeCompare(b.created_at))
@@ -80,7 +102,6 @@ export function VersionImagesPage() {
   }, [versions])
 
   const version = versions.find((v) => v.id === versionId) ?? null
-  const filteredImages = images.filter((img) => img.split === activeTab)
   const tabCounts = {
     train: version?.split_ratio?.train.count ?? 0,
     valid: version?.split_ratio?.valid.count ?? 0,
@@ -139,7 +160,7 @@ export function VersionImagesPage() {
         </div>
       </aside>
 
-      <div className="flex-1 overflow-y-auto p-8">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto p-8">
         <button
           onClick={() => navigate(`/projects/${projectId}/versions`)}
           className="mb-3 flex items-center gap-1 text-xs font-medium tracking-wide text-muted-foreground uppercase hover:text-foreground"
@@ -185,20 +206,20 @@ export function VersionImagesPage() {
           <div className="p-5 pt-0">
             {loadingImages ? (
               <p className="py-8 text-sm text-muted-foreground">Loading…</p>
-            ) : filteredImages.length === 0 ? (
+            ) : images.length === 0 ? (
               <p className="py-8 text-sm text-muted-foreground">No images in this split.</p>
             ) : (
               <div className="grid grid-cols-4 gap-4 pb-5 sm:grid-cols-6 lg:grid-cols-8">
-                {filteredImages.map((img, index) => (
+                {images.map((img, index) => (
                   <button
                     key={img.id}
                     onClick={() => setPreviewIndex(index)}
-                    className="group relative aspect-square overflow-hidden rounded-md bg-muted"
+                    className="group relative aspect-square overflow-hidden rounded-md bg-muted [content-visibility:auto] [contain-intrinsic-size:0_150px]"
                   >
                     {img.thumbnail_url && (
                       <img src={img.thumbnail_url} alt={img.filename} className="size-full object-cover" />
                     )}
-                    <ThumbAnnotations img={img} />
+                    <ThumbAnnotations img={img} containerAspect={1} />
                     <span className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition-colors group-hover:bg-black/30 group-hover:opacity-100">
                       <Maximize2 className="size-5 text-white" />
                     </span>
@@ -206,22 +227,31 @@ export function VersionImagesPage() {
                 ))}
               </div>
             )}
-            <p className="border-t border-border pt-4 text-sm text-muted-foreground">
-              {filteredImages.length} / {tabCounts[activeTab]} images
-            </p>
+            <div className="flex items-center justify-between border-t border-border pt-4">
+              <p className="text-sm text-muted-foreground">
+                {images.length} / {tabCounts[activeTab]} images
+              </p>
+              {images.length < tabCounts[activeTab] && (
+                <Button variant="outline" size="sm" onClick={loadMoreImages} disabled={loadingMore}>
+                  {loadingMore ? "Loading…" : "Load more"}
+                </Button>
+              )}
+            </div>
           </div>
         </div>
       </div>
+
+      <ScrollToTopButton containerRef={scrollRef} />
 
       <Dialog open={previewIndex !== null} onOpenChange={(v) => !v && setPreviewIndex(null)}>
         <DialogContent
           showCloseButton={false}
           className="max-w-5xl gap-0 border-none bg-transparent p-0 shadow-none"
         >
-          {previewIndex !== null && filteredImages[previewIndex] && (
+          {previewIndex !== null && images[previewIndex] && (
             <div className="flex flex-col gap-3">
               <div className="flex items-center justify-between text-sm text-white">
-                <p className="truncate font-medium">{filteredImages[previewIndex].filename}</p>
+                <p className="truncate font-medium">{images[previewIndex].filename}</p>
                 <button
                   onClick={() => setPreviewIndex(null)}
                   className="flex size-7 items-center justify-center rounded-md hover:bg-white/10"
@@ -241,10 +271,10 @@ export function VersionImagesPage() {
                 )}
 
                 <div className="relative max-h-[80vh] overflow-hidden rounded-lg bg-black">
-                  {filteredImages[previewIndex].image_url ? (
+                  {images[previewIndex].image_url ? (
                     <img
-                      src={filteredImages[previewIndex].image_url ?? undefined}
-                      alt={filteredImages[previewIndex].filename}
+                      src={images[previewIndex].image_url ?? undefined}
+                      alt={images[previewIndex].filename}
                       className="max-h-[80vh] max-w-full object-contain"
                     />
                   ) : (
@@ -252,10 +282,13 @@ export function VersionImagesPage() {
                       Preview unavailable
                     </div>
                   )}
-                  <ThumbAnnotations img={filteredImages[previewIndex]} />
+                  <ThumbAnnotations
+                    img={images[previewIndex]}
+                    containerAspect={(images[previewIndex].width || 1) / (images[previewIndex].height || 1)}
+                  />
                 </div>
 
-                {previewIndex < filteredImages.length - 1 && (
+                {previewIndex < images.length - 1 && (
                   <button
                     onClick={() => setPreviewIndex((i) => (i !== null ? i + 1 : i))}
                     className="absolute right-2 z-10 flex size-9 items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70"
@@ -266,7 +299,7 @@ export function VersionImagesPage() {
               </div>
 
               <p className="text-center text-xs text-white/70">
-                {previewIndex + 1} of {filteredImages.length}
+                {previewIndex + 1} of {images.length}
               </p>
             </div>
           )}

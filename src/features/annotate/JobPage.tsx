@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useParams, useNavigate, Link } from "react-router-dom"
 import { X, Pencil, Check, RotateCcw, Activity, ShieldCheck } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -18,6 +18,7 @@ import {
 } from "@/lib/jobApi"
 import { sendImageToUnannotated } from "@/lib/commentApi"
 import { InstructionsEditor } from "@/components/shared/InstructionsEditor"
+import { ScrollToTopButton } from "@/components/shared/ScrollToTopButton"
 import { useWorkspaceStore } from "@/stores/workspaceStore"
 import { useToastStore } from "@/stores/toastStore"
 import { ReassignJobDialog } from "./ReassignJobDialog"
@@ -35,11 +36,14 @@ export function JobPage() {
   const [job, setJob] = useState<JobDetail | null>(null)
   const [tab, setTab] = useState<Tab>("unannotated")
   const [images, setImages] = useState<JobImageSummary[]>([])
+  const [imagesTotal, setImagesTotal] = useState(0)
   const [loadingImages, setLoadingImages] = useState(true)
+  const [loadingMoreImages, setLoadingMoreImages] = useState(false)
   const [selectedImageIds, setSelectedImageIds] = useState<string[]>([])
   const [addToDatasetOpen, setAddToDatasetOpen] = useState(false)
   const [sendingSelectedToUnannotated, setSendingSelectedToUnannotated] = useState(false)
   const addToast = useToastStore((s) => s.addToast)
+  const scrollRef = useRef<HTMLDivElement>(null)
 
   const [activity, setActivity] = useState<JobActivityEntry[]>([])
 
@@ -114,14 +118,27 @@ export function JobPage() {
   useEffect(refetchActivity, [workspaceId, projectId, jobId])
   useEffect(refetchReviewers, [workspaceId, projectId, jobId])
 
+  const JOB_IMAGES_PAGE_SIZE = 60
+
   useEffect(() => {
     if (!workspaceId || !projectId || !jobId) return
     setLoadingImages(true)
     setSelectedImageIds([])
-    getJobImages(workspaceId, projectId, jobId, tab)
-      .then((res) => setImages(res.images))
+    getJobImages(workspaceId, projectId, jobId, tab, { skip: 0, limit: JOB_IMAGES_PAGE_SIZE })
+      .then((res) => {
+        setImages(res.images)
+        setImagesTotal(res.total)
+      })
       .finally(() => setLoadingImages(false))
   }, [workspaceId, projectId, jobId, tab])
+
+  function loadMoreImages() {
+    if (!workspaceId || !projectId || !jobId || loadingMoreImages) return
+    setLoadingMoreImages(true)
+    getJobImages(workspaceId, projectId, jobId, tab, { skip: images.length, limit: JOB_IMAGES_PAGE_SIZE })
+      .then((res) => setImages((prev) => [...prev, ...res.images]))
+      .finally(() => setLoadingMoreImages(false))
+  }
 
   function toggleImageSelect(id: string) {
     setSelectedImageIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
@@ -316,7 +333,7 @@ export function JobPage() {
       </div>
 
       {/* Main */}
-      <div className="flex-1 overflow-y-auto p-8">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto p-8">
         <div className="mb-5 flex items-center justify-between">
           {editingTitle ? (
             <div className="flex items-center gap-2">
@@ -459,7 +476,10 @@ export function JobPage() {
                       ? { label: "Test", icon: Pencil }
                       : null
               return (
-                <div key={img.id} className="group relative flex flex-col gap-1.5">
+                <div
+                  key={img.id}
+                  className="group relative flex flex-col gap-1.5 [content-visibility:auto] [contain-intrinsic-size:0_220px]"
+                >
                   <div
                     onClick={() => handleImageCardClick(img.id)}
                     className={`relative aspect-[4/3] cursor-pointer overflow-hidden rounded-md border bg-muted ${
@@ -494,7 +514,16 @@ export function JobPage() {
             })}
           </div>
         )}
+        {images.length > 0 && images.length < imagesTotal && (
+          <div className="mt-4 flex justify-center">
+            <Button variant="outline" size="sm" onClick={loadMoreImages} disabled={loadingMoreImages}>
+              {loadingMoreImages ? "Loading…" : `Load more (${images.length} / ${imagesTotal})`}
+            </Button>
+          </div>
+        )}
       </div>
+
+      <ScrollToTopButton containerRef={scrollRef} />
 
       {workspaceId && projectId && (
         <>

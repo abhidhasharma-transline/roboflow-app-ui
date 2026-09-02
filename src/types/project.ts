@@ -20,6 +20,10 @@ export interface Project {
   created_at: string
   thumbnail_url: string | null
   classes_locked: boolean
+  /** The caller's own role/permissions in this project — undefined on list
+   *  endpoints that don't compute it, only ever populated by getProject(). */
+  my_role?: string | null
+  my_permissions?: Record<string, boolean> | null
 }
 
 export interface ProjectFolder {

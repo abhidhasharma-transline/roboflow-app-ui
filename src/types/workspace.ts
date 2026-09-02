@@ -44,6 +44,7 @@ export interface MyInvitation {
   workspace_id: string
   workspace_name: string
   invited_by: string
+  invited_by_name: string
   role: WorkspaceRole
   token: string
   created_at: string

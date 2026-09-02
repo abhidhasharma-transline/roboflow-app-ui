@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { useParams } from "react-router-dom"
-import { ListChecks, Search, Plus, Trash2, Check, AlertTriangle } from "lucide-react"
+import { ListChecks, Search, Plus, Trash2, Check, AlertTriangle, Pencil } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -75,9 +75,11 @@ function InlineEditableName({
         setDraft(value)
         setEditing(true)
       }}
-      className="rounded px-1 py-0.5 text-left text-sm text-foreground hover:bg-accent"
+      title="Click to rename"
+      className="group flex items-center gap-1.5 rounded px-1 py-0.5 text-left text-sm text-foreground hover:bg-accent"
     >
       {value}
+      <Pencil className="size-3 shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100" />
     </button>
   )
 }

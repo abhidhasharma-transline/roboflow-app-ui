@@ -6,8 +6,11 @@ export interface UploadImagesResponse {
   source_type: "images" | "folder"
   saved: number
   duplicates: number
+  duplicate_filenames: string[]
   errors: { file: string; error: string }[]
   total: number
+  images_annotated: number
+  annotations_imported: number
 }
 
 export interface VideoInitiateResponse {
@@ -57,6 +60,8 @@ export interface BatchPreviewImage {
   width: number
   height: number
   tags: { id: string; name: string }[]
+  annotation_count: number
+  class_names: string[]
 }
 
 export interface BatchPreviewResponse {

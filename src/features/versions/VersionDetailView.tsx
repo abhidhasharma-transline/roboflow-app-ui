@@ -12,15 +12,14 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { useToastStore } from "@/stores/toastStore"
-import { exportFilename } from "@/lib/utils"
 import {
   getVersionImages,
   renameVersion,
   deleteVersion,
-  exportVersionYolo,
   type ProjectVersion,
   type VersionImageSummary,
 } from "@/lib/versionApi"
+import { objectCoverViewBox } from "@/lib/thumbnailGeometry"
 import type { ProjectAnnotationType } from "@/types/project"
 import { DownloadVersionDialog } from "./DownloadVersionDialog"
 import { DeleteVersionDialog } from "./DeleteVersionDialog"
@@ -35,10 +34,14 @@ function initialsFromName(name: string | null) {
   return ((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase() || "?"
 }
 
-function ThumbAnnotations({ img }: { img: VersionImageSummary }) {
+function ThumbAnnotations({ img, containerAspect }: { img: VersionImageSummary; containerAspect: number }) {
   if (img.annotations.length === 0) return null
   return (
-    <svg className="pointer-events-none absolute inset-0 size-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+    <svg
+      className="pointer-events-none absolute inset-0 size-full"
+      viewBox={objectCoverViewBox(img.width, img.height, containerAspect)}
+      preserveAspectRatio="none"
+    >
       {img.annotations.map((a, i) =>
         a.shape_type === "bbox" ? (
           <rect
@@ -70,7 +73,6 @@ function ThumbAnnotations({ img }: { img: VersionImageSummary }) {
 export function VersionDetailView({
   workspaceId,
   projectId,
-  projectName,
   version,
   annotationType,
   onRenamed,
@@ -78,7 +80,6 @@ export function VersionDetailView({
 }: {
   workspaceId: string
   projectId: string
-  projectName: string
   version: ProjectVersion
   annotationType: ProjectAnnotationType
   onRenamed: (v: ProjectVersion) => void
@@ -94,7 +95,6 @@ export function VersionDetailView({
   const [nameDraft, setNameDraft] = useState(version.name)
   const [saving, setSaving] = useState(false)
 
-  const [downloading, setDownloading] = useState(false)
   const [downloadDialogOpen, setDownloadDialogOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
@@ -103,7 +103,10 @@ export function VersionDetailView({
     setNameDraft(version.name)
     setEditingName(false)
     setLoadingImages(true)
-    getVersionImages(workspaceId, projectId, version.id)
+    // Only the first 8 are ever shown here (a preview strip, not a full
+    // browser) — ask the paginated endpoint for exactly that instead of
+    // pulling every image in the version just to slice it down client-side.
+    getVersionImages(workspaceId, projectId, version.id, { limit: 8 })
       .then((res) => setImages(res.items))
       .finally(() => setLoadingImages(false))
   }, [workspaceId, projectId, version.id])
@@ -128,25 +131,6 @@ export function VersionDetailView({
     }
   }
 
-  async function handleDownload(format: string) {
-    setDownloading(true)
-    try {
-      const blob = await exportVersionYolo(workspaceId, projectId, version.id)
-      const objectUrl = URL.createObjectURL(blob)
-      const a = document.createElement("a")
-      a.href = objectUrl
-      a.download = exportFilename([projectName, version.name, format.toLowerCase()], "zip")
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      URL.revokeObjectURL(objectUrl)
-      setDownloadDialogOpen(false)
-    } catch {
-      addToast({ variant: "error", title: "Download failed", description: "Please try again." })
-    } finally {
-      setDownloading(false)
-    }
-  }
 
   async function handleDelete() {
     if (deleting) return
@@ -250,7 +234,7 @@ export function VersionDetailView({
           {images.slice(0, 8).map((img) => (
             <div key={img.id} className="relative aspect-square overflow-hidden rounded-md bg-muted">
               {img.thumbnail_url && <img src={img.thumbnail_url} alt={img.filename} className="size-full object-cover" />}
-              <ThumbAnnotations img={img} />
+              <ThumbAnnotations img={img} containerAspect={1} />
             </div>
           ))}
         </div>
@@ -294,8 +278,9 @@ export function VersionDetailView({
       <DownloadVersionDialog
         open={downloadDialogOpen}
         onOpenChange={setDownloadDialogOpen}
-        onDownload={handleDownload}
-        downloading={downloading}
+        workspaceId={workspaceId}
+        projectId={projectId}
+        versionId={version.id}
       />
       <DeleteVersionDialog
         open={deleteDialogOpen}

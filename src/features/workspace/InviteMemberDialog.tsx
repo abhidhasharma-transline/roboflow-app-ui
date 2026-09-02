@@ -164,8 +164,8 @@ export function InviteMemberDialog({
         <DialogHeader>
           <DialogTitle>Invite members</DialogTitle>
           <DialogDescription>
-            Add each person one at a time — you'll set their role and access right after adding
-            their email, so different people can get different settings.
+            Add members one at a time, then set each person's role and access — ideal when
+            different people need different permissions.
           </DialogDescription>
         </DialogHeader>
 

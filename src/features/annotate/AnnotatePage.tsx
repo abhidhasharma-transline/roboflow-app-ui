@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
 import { useParams, Link } from "react-router-dom"
-import { ClipboardList, Upload, MoreVertical, Info, HelpCircle, Download } from "lucide-react"
+import { ClipboardList, Upload, MoreVertical, Info, HelpCircle, Download, GitMerge, Search } from "lucide-react"
 import {
   Select,
   SelectTrigger,
@@ -25,9 +25,10 @@ import {
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Checkbox } from "@/components/ui/checkbox"
 import { TagInput } from "@/components/shared/TagInput"
 import {
-  listBatches, listJobs, renameBatch, tagBatchImages,
+  listBatches, listJobs, renameBatch, tagBatchImages, mergeBatches, downloadBatchImages,
   updateJobTitle, tagJobImages, moveJobToUnassigned, deleteJobAnnotations,
 } from "@/lib/jobApi"
 import { discardBatch } from "@/lib/uploadApi"
@@ -47,13 +48,170 @@ function ColumnHelp({ text }: { text: string }) {
   )
 }
 
+/** Mirrors Roboflow's "Merge Batches" dialog — combine several Unassigned
+ *  batches into one. The batch with the most images stays and absorbs the
+ *  rest; the others empty out and drop off the Unassigned column on their
+ *  own (list_batches already hides any batch with unassigned_count === 0),
+ *  so there's nothing here to delete. */
+function MergeBatchesDialog({
+  open,
+  onOpenChange,
+  currentBatch,
+  allBatches,
+  projectId,
+  workspaceId,
+  onMerged,
+}: {
+  open: boolean
+  onOpenChange: (v: boolean) => void
+  currentBatch: BatchSummary
+  allBatches: BatchSummary[]
+  projectId: string
+  workspaceId: string
+  onMerged: () => void
+}) {
+  const [search, setSearch] = useState("")
+  const [selectedIds, setSelectedIds] = useState<string[]>([currentBatch.id])
+  const [merging, setMerging] = useState(false)
+  const addToast = useToastStore((s) => s.addToast)
+
+  useEffect(() => {
+    if (open) {
+      setSelectedIds([currentBatch.id])
+      setSearch("")
+    }
+  }, [open, currentBatch.id])
+
+  const filtered = allBatches.filter((b) =>
+    b.name.toLowerCase().includes(search.trim().toLowerCase())
+  )
+  const selectedBatches = allBatches.filter((b) => selectedIds.includes(b.id))
+  const totalImages = selectedBatches.reduce((sum, b) => sum + b.unassigned_count, 0)
+  const target =
+    selectedBatches.length > 0
+      ? selectedBatches.reduce((max, b) => (b.unassigned_count > max.unassigned_count ? b : max))
+      : null
+
+  function toggle(id: string) {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+  }
+
+  async function handleMerge() {
+    if (selectedIds.length < 2) return
+    setMerging(true)
+    try {
+      await mergeBatches(workspaceId, projectId, selectedIds)
+      onOpenChange(false)
+      onMerged()
+      addToast({ variant: "success", title: "Batches merged" })
+    } catch (err) {
+      addToast({ variant: "error", title: "Couldn't merge batches", description: extractErrorMessage(err) })
+    } finally {
+      setMerging(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={merging ? undefined : onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <GitMerge className="size-4" />
+            Merge Batches
+          </DialogTitle>
+        </DialogHeader>
+        <p className="text-sm text-muted-foreground">
+          Select batches to combine. The selected batch with the most images will remain and
+          receive all images; the other selected batches will become empty and disappear from
+          this board.
+        </p>
+        <div className="relative">
+          <Search className="absolute top-2.5 left-2.5 size-4 text-muted-foreground" />
+          <Input
+            placeholder="Search batches..."
+            className="pl-8"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+        <div className="flex items-center justify-between text-sm">
+          <span className="font-medium text-foreground">
+            {selectedIds.length} batch{selectedIds.length !== 1 && "es"} selected
+          </span>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              className="text-xs font-medium text-brand hover:underline"
+              onClick={() => setSelectedIds(allBatches.map((b) => b.id))}
+            >
+              Select All
+            </button>
+            <button
+              type="button"
+              className="text-xs font-medium text-muted-foreground hover:underline"
+              onClick={() => setSelectedIds([])}
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+        <div className="max-h-64 overflow-y-auto rounded-md border border-border">
+          {filtered.length === 0 ? (
+            <p className="p-4 text-center text-sm text-muted-foreground">No batches found.</p>
+          ) : (
+            filtered.map((b) => (
+              <label
+                key={b.id}
+                className={`flex cursor-pointer items-center gap-3 border-b border-border px-3 py-2.5 last:border-b-0 hover:bg-accent ${
+                  selectedIds.includes(b.id) ? "bg-brand/5" : ""
+                }`}
+              >
+                <Checkbox checked={selectedIds.includes(b.id)} onCheckedChange={() => toggle(b.id)} />
+                <span className="flex-1 truncate text-sm text-foreground">{b.name}</span>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {b.unassigned_count} image{b.unassigned_count !== 1 && "s"}
+                </span>
+              </label>
+            ))
+          )}
+        </div>
+        {selectedIds.length > 0 && (
+          <div className="rounded-md bg-muted p-3 text-sm text-foreground">
+            <span className="font-medium">
+              {selectedIds.length} batch{selectedIds.length !== 1 && "es"}
+            </span>{" "}
+            with {totalImages} image{totalImages !== 1 && "s"} selected.
+            {selectedIds.length > 1 && target && (
+              <>
+                {" "}
+                Images will be merged into <span className="font-medium">{target.name}</span>, the
+                selected batch with the most images.
+              </>
+            )}
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={merging}>
+            Cancel
+          </Button>
+          <Button variant="brand" onClick={handleMerge} disabled={merging || selectedIds.length < 2}>
+            {merging ? "Merging…" : `Merge ${selectedIds.length} Batch${selectedIds.length !== 1 ? "es" : ""}`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 function BatchCard({
   batch,
+  allBatches,
   projectId,
   workspaceId,
   onChanged,
 }: {
   batch: BatchSummary
+  allBatches: BatchSummary[]
   projectId: string
   workspaceId: string
   onChanged: () => void
@@ -65,6 +223,9 @@ function BatchCard({
   const [tagOpen, setTagOpen] = useState(false)
   const [tagDraft, setTagDraft] = useState<string[]>([])
   const [tagSaving, setTagSaving] = useState(false)
+
+  const [mergeOpen, setMergeOpen] = useState(false)
+  const [downloading, setDownloading] = useState(false)
 
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -110,6 +271,17 @@ function BatchCard({
     }
   }
 
+  async function handleDownload() {
+    setDownloading(true)
+    try {
+      await downloadBatchImages(workspaceId, projectId, batch.id, batch.name)
+    } catch (err) {
+      addToast({ variant: "error", title: "Couldn't download batch", description: extractErrorMessage(err) })
+    } finally {
+      setDownloading(false)
+    }
+  }
+
   return (
     <div className="rounded-lg border border-border p-4">
       <div className="mb-2 flex items-start justify-between">
@@ -135,6 +307,14 @@ function BatchCard({
               Rename Batch
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => setTagOpen(true)}>Tag Images</DropdownMenuItem>
+            <DropdownMenuItem onClick={handleDownload} disabled={downloading}>
+              <Download className="size-3.5" />
+              {downloading ? "Downloading…" : "Download"}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setMergeOpen(true)} disabled={allBatches.length < 2}>
+              <GitMerge className="size-3.5" />
+              Merge Batches
+            </DropdownMenuItem>
             <DropdownMenuItem onClick={() => setDeleteOpen(true)} variant="destructive">
               Delete Batch
             </DropdownMenuItem>
@@ -206,6 +386,16 @@ function BatchCard({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <MergeBatchesDialog
+        open={mergeOpen}
+        onOpenChange={setMergeOpen}
+        currentBatch={batch}
+        allBatches={allBatches}
+        projectId={projectId}
+        workspaceId={workspaceId}
+        onMerged={onChanged}
+      />
     </div>
   )
 }
@@ -740,7 +930,14 @@ export function AnnotatePage() {
                 </div>
               ) : (
                 unassignedBatches.map((b) => (
-                  <BatchCard key={b.id} batch={b} projectId={projectId!} workspaceId={workspaceId!} onChanged={refetch} />
+                  <BatchCard
+                    key={b.id}
+                    batch={b}
+                    allBatches={unassignedBatches}
+                    projectId={projectId!}
+                    workspaceId={workspaceId!}
+                    onChanged={refetch}
+                  />
                 ))
               )}
             </div>
