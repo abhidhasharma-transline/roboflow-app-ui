@@ -50,7 +50,10 @@ export function WorkspaceManagementCard({ workspace }: WorkspaceManagementCardPr
           for (const row of rows) {
             if (row.role === "super_admin") continue
             if (!map[row.user_id]) map[row.user_id] = []
-            map[row.user_id].push({ project, role: row.role, permissions: row.permission_overrides })
+            map[row.user_id].push({
+              project, role: row.role, permissions: row.permission_overrides,
+              hasExplicitAccess: row.has_explicit_access,
+            })
           }
         }
         setOverridesByUser(map)
@@ -117,8 +120,10 @@ export function WorkspaceManagementCard({ workspace }: WorkspaceManagementCardPr
                 canManage={canManage}
                 isSelf={member.user_id === currentUser?.id}
                 selfIsSuperAdmin={member.user_id === currentUser?.id && isSuperAdmin}
+                isOwner={member.user_id === workspace.owner_id}
                 onRoleChange={handleRoleChange}
                 onRefetchOverrides={refetchOverrides}
+                onRefetchMembers={refetchMembers}
               />
             ))}
           </div>

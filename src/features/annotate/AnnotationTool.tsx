@@ -50,6 +50,7 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { PageLoader } from "@/components/shared/PageLoader"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import {
   DropdownMenu,
@@ -1585,8 +1586,8 @@ export function AnnotationToolPage() {
 
   if (!currentImage) {
     return (
-      <div className="flex h-screen items-center justify-center bg-background text-sm text-muted-foreground">
-        Loading…
+      <div className="flex h-screen items-center justify-center bg-background">
+        <PageLoader />
       </div>
     )
   }
@@ -1891,7 +1892,7 @@ export function AnnotationToolPage() {
             <>
               <p className="mb-3 text-xs font-semibold text-foreground">History</p>
               {loadingHistory ? (
-                <p className="text-xs text-muted-foreground">Loading…</p>
+                <PageLoader />
               ) : historyEntries.length === 0 ? (
                 <div className="mt-10 flex flex-col items-center gap-1 text-center">
                   <div className="mb-1 flex size-9 items-center justify-center rounded-md bg-muted">

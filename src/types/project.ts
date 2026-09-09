@@ -47,6 +47,10 @@ export interface ProjectMember {
   // project role is a vestigial value that isn't actually consulted, since
   // super admin bypasses every permission check outright.
   is_super_admin: boolean
+  // False for a member listed here only via workspace-wide
+  // has_full_project_access, not a real per-project ProjectAccess row —
+  // PATCHing their permissions would 404 since there's no row to update.
+  has_explicit_access: boolean
   email: string
   username: string
   first_name?: string

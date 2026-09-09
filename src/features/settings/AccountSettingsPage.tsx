@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom"
 import { LogOut, ShieldCheck, User as UserIcon, Building2, Plus } from "lucide-react"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
+import { PageLoader } from "@/components/shared/PageLoader"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -198,7 +199,7 @@ export function AccountSettingsPage() {
               </div>
 
               {isLoadingWorkspaces ? (
-                <p className="text-sm text-muted-foreground">Loading…</p>
+                <PageLoader />
               ) : workspaceRows.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No workspaces yet.</p>
               ) : (

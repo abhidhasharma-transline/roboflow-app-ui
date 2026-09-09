@@ -73,6 +73,11 @@ export async function mergeBatches(
 
 /** Streams the batch's raw images as a zip (protected route, so a plain
  *  <a href> can't carry the auth header) and saves it client-side. */
+/** Fetched as a blob (not a plain <a href> navigation) because the endpoint
+ *  needs the auth header — a bare link can't carry it. The resulting blob:
+ *  URL is same-origin, so link.download reliably triggers a silent save
+ *  instead of the browser's "Save As" prompt (which cross-origin links, or
+ *  a click fired well after the user's original gesture, can trigger). */
 export async function downloadBatchImages(
   workspaceId: string,
   projectId: string,
@@ -134,12 +139,37 @@ export async function getJobImages(
   projectId: string,
   jobId: string,
   tab: "annotated" | "unannotated" | "all",
-  paging?: { skip?: number; limit?: number }
+  paging?: { skip?: number; limit?: number },
+  /** Only meaningful with tab="annotated" — see get_job_images' own docstring. */
+  review?: "pending" | "approved",
+  /** Narrows a shared job's full image list to one labeler's slice — ignored
+   *  server-side for a Labeler caller, whose own query is already forced to
+   *  their own id regardless of this param. */
+  assignedTo?: string
 ): Promise<{ total: number; images: JobImageSummary[] }> {
   const res = await api.get<{ total: number; images: JobImageSummary[] }>(
     `${jobsBase(workspaceId, projectId)}/${jobId}/images`,
-    { params: { tab, ...paging } }
+    { params: { tab, review, assigned_to: assignedTo, ...paging } }
   )
+  return res.data
+}
+
+/** The approve/reject action a reviewer takes on a job's annotated images —
+ *  the piece that was missing before: "Submit for Review" could hand a job
+ *  to a reviewer, but nothing could ever act on it. */
+export async function reviewJobImages(
+  workspaceId: string,
+  projectId: string,
+  jobId: string,
+  imageIds: string[],
+  action: "approve" | "reject",
+  note?: string
+): Promise<{ updated: number; action: string }> {
+  const res = await api.post(`${jobsBase(workspaceId, projectId)}/${jobId}/images/review`, {
+    image_ids: imageIds,
+    action,
+    note,
+  })
   return res.data
 }
 

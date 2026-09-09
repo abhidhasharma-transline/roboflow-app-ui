@@ -132,7 +132,7 @@ export function ProjectCard({ project, workspaceId, onChanged }: ProjectCardProp
   return (
     <>
       <Link
-        to={`/projects/${project.id}/train`}
+        to={`/projects/${project.id}/upload`}
         className="group block overflow-hidden rounded-lg border border-border bg-card transition-all duration-200 hover:border-brand/30 hover:shadow-[0_0_18px_-6px_rgba(168,85,247,0.25)]"
       >
         <div className="flex aspect-[16/9] items-center justify-center overflow-hidden bg-muted">

@@ -1,4 +1,4 @@
-import { CheckCircle2, XCircle, X } from "lucide-react"
+import { CheckCircle2, XCircle, Loader2, X } from "lucide-react"
 import { useToastStore } from "@/stores/toastStore"
 
 export function ToastContainer() {
@@ -16,11 +16,17 @@ export function ToastContainer() {
         >
           <div
             className={`flex size-8 shrink-0 items-center justify-center rounded-full ${
-              t.variant === "success" ? "bg-green-500/15" : "bg-destructive/15"
+              t.variant === "success"
+                ? "bg-green-500/15"
+                : t.variant === "loading"
+                  ? "bg-brand/15"
+                  : "bg-destructive/15"
             }`}
           >
             {t.variant === "success" ? (
               <CheckCircle2 className="size-4 text-green-500" />
+            ) : t.variant === "loading" ? (
+              <Loader2 className="size-4 animate-spin text-brand" />
             ) : (
               <XCircle className="size-4 text-destructive" />
             )}

@@ -26,9 +26,7 @@ const TABS: { key: BatchPreviewTab; label: string }[] = [
 
 /** Thumbnail generation runs async on a worker — thumbnail_url can point at
  *  an object that doesn't exist in storage yet, which shows as a broken
- *  image. Fall back to a plain placeholder instead of a broken-image icon.
- *  Duplicates now carry a real thumbnail (reused from the original image),
- *  so they get the actual photo plus a small badge, not a blank box. */
+ *  image. Fall back to a plain placeholder instead of a broken-image icon. */
 function Thumb({ img }: { img: BatchPreviewImage }) {
   const [failed, setFailed] = useState(false)
   const hasImage = img.thumbnail_url && !failed
@@ -46,11 +44,6 @@ function Thumb({ img }: { img: BatchPreviewImage }) {
         <div className="flex size-full items-center justify-center text-xs text-muted-foreground">
           Processing…
         </div>
-      )}
-      {img.is_duplicate && (
-        <span className="absolute top-1 left-1 rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-medium text-amber-950 shadow-sm">
-          Duplicate
-        </span>
       )}
     </div>
   )
@@ -122,7 +115,7 @@ export function BatchReview({
   // minutes as a safety net so a genuinely stuck thumbnail doesn't poll forever.
   useEffect(() => {
     if (images.length === 0) return
-    if (images.every((img) => img.thumbnail_url || img.is_duplicate)) return
+    if (images.every((img) => img.thumbnail_url)) return
     let cancelled = false
     let attempts = 0
     const interval = setInterval(async () => {
@@ -136,7 +129,7 @@ export function BatchReview({
         if (cancelled) return
         setPreview(res)
         setImages(res.images)
-        if (res.images.every((img) => img.thumbnail_url || img.is_duplicate)) {
+        if (res.images.every((img) => img.thumbnail_url)) {
           clearInterval(interval)
         }
       } catch {
@@ -246,7 +239,12 @@ export function BatchReview({
               <BoxSelect className="size-4" />
               Select Folder
             </Button>
-            <Button variant="brand" onClick={handleSave} disabled={saving}>
+            <Button
+              variant="brand"
+              onClick={handleSave}
+              disabled={saving || preview?.counts.all === 0}
+              title={preview?.counts.all === 0 ? "There's nothing in this batch to save" : undefined}
+            >
               {saving ? "Saving…" : "Save and Continue"}
             </Button>
           </div>

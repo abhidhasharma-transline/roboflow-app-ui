@@ -256,6 +256,18 @@ export function UploadPage() {
           description: `${res.annotations_imported} box${res.annotations_imported !== 1 ? "es" : ""} across ${res.images_annotated} image${res.images_annotated !== 1 ? "s" : ""}, from the label files in your upload.`,
         })
       }
+      if (res.saved === 0) {
+        // Nothing new actually landed in this batch (e.g. every file was
+        // an exact duplicate of something already in the project) — a
+        // Batch Review screen for a batch with zero images is a dead end
+        // (nothing to look at, "Save and Continue" would have nothing to
+        // save). Discard the now-pointless empty batch and stay on the
+        // upload screen instead — the duplicate dialog above already told
+        // the user what happened to their files.
+        discardBatch(workspaceId, projectId, res.batch_id).catch(() => {})
+        setStage({ kind: "idle" })
+        return
+      }
       setPendingBatch({ workspaceId, projectId, batchId: res.batch_id })
       setStage({ kind: "review", batchId: res.batch_id })
     } catch (err) {
@@ -267,6 +279,18 @@ export function UploadPage() {
     const files = Array.from(fileList)
     const videoFile = files.find((f) => f.type.startsWith("video/") || VIDEO_EXTENSIONS.test(f.name))
     if (videoFile) {
+      // Video extraction and image upload are two separate flows — only one
+      // file can go through the extraction modal at a time. Previously the
+      // rest of a mixed selection (images, label files) just vanished with
+      // no indication anything was dropped; now the user is told exactly
+      // what got skipped and why, instead of silently losing files.
+      if (files.length > 1) {
+        addToast({
+          variant: "error",
+          title: "Only the video was opened",
+          description: `${files.length - 1} other file${files.length - 1 !== 1 ? "s" : ""} in that selection ${files.length - 1 !== 1 ? "were" : "was"} ignored — upload a video by itself, or upload images/labels separately.`,
+        })
+      }
       setStage({ kind: "video-modal", file: videoFile })
       return
     }
@@ -565,9 +589,19 @@ export function UploadPage() {
           file={stage.file}
           batchName={batchName}
           tagNames={tags}
+          onBatchCommitted={(batchId) => setPendingBatch({ workspaceId, projectId, batchId })}
           onExtractionComplete={(batchId) => {
             setPendingBatch({ workspaceId, projectId, batchId })
             setStage({ kind: "review", batchId })
+          }}
+          onExtractionEmpty={() => {
+            clearPendingBatch()
+            addToast({
+              variant: "error",
+              title: "Nothing new to add",
+              description: "Every frame this video would have produced already exists in this project.",
+            })
+            setStage({ kind: "idle" })
           }}
           onSkip={() => setStage({ kind: "idle" })}
         />
@@ -596,7 +630,8 @@ export function UploadPage() {
       <Dialog open={duplicateNotice !== null} onOpenChange={(open) => !open && setDuplicateNotice(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>
+            <DialogTitle className="flex items-center gap-2 text-amber-600 dark:text-amber-400">
+              <AlertTriangle className="size-5 shrink-0" />
               {duplicateNotice?.length} duplicate image{duplicateNotice?.length !== 1 ? "s" : ""} skipped
             </DialogTitle>
             <DialogDescription>

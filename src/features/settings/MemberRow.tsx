@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { ChevronDown, ChevronRight, Plus } from "lucide-react"
+import { ChevronDown, ChevronRight, Plus, UserX } from "lucide-react"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -12,9 +12,10 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { initials, roleLabel } from "@/lib/userDisplay"
-import { effectivePermissions, PERMISSION_KEYS, PERMISSION_LABELS, type PermissionKey } from "@/lib/permissions"
+import { effectivePermissions, diffFromRoleDefaults, PERMISSION_KEYS, PERMISSION_LABELS, type PermissionKey } from "@/lib/permissions"
 import { getProjectColor } from "@/lib/projectColors"
 import { updateProjectMember, addProjectMember } from "@/lib/projectApi"
+import { updateWorkspaceMember, removeWorkspaceMember } from "@/lib/workspaceApi"
 import { useToastStore } from "@/stores/toastStore"
 import type { WorkspaceMember } from "@/types/workspace"
 import type { WorkspaceRole } from "@/types/auth"
@@ -33,6 +34,11 @@ export interface ProjectOverride {
   project: Project
   role: WorkspaceRole
   permissions: Record<string, boolean> | null
+  // False when this entry only exists because the member has workspace-wide
+  // full project access — there's no real ProjectAccess row backing it, so
+  // toggling a permission must POST a new override (isNew), not PATCH one
+  // that doesn't exist yet.
+  hasExplicitAccess: boolean
 }
 
 const ROLE_OPTIONS: WorkspaceRole[] = ["admin", "labeler", "reviewer"]
@@ -48,8 +54,10 @@ interface MemberRowProps {
    *  their workspace_members.role is a vestigial "admin" value they never actually
    *  rely on (super_admin bypasses everything), so show that instead. */
   selfIsSuperAdmin: boolean
+  isOwner: boolean
   onRoleChange: (userId: string, role: WorkspaceRole) => void
   onRefetchOverrides: () => void
+  onRefetchMembers: () => void
 }
 
 export function MemberRow({
@@ -60,8 +68,10 @@ export function MemberRow({
   canManage,
   isSelf,
   selfIsSuperAdmin,
+  isOwner,
   onRoleChange,
   onRefetchOverrides,
+  onRefetchMembers,
 }: MemberRowProps) {
   const [expanded, setExpanded] = useState(false)
   const [isAdding, setIsAdding] = useState(false)
@@ -87,9 +97,41 @@ export function MemberRow({
       }
       cancelAdd()
       onRefetchOverrides()
+      addToast({ variant: "success", title: "Permission saved" })
     } catch (err) {
       addToast({ variant: "error", title: "Couldn't update permission", description: extractErrorMessage(err) })
       onRefetchOverrides()
+    }
+  }
+
+  // Workspace-level permissions have no ceiling check (unlike a per-project
+  // override, which can only ever turn something OFF relative to this) — a
+  // super admin/owner can grant any permission to any role here without
+  // promoting them. This is the only place that CAN grant something a
+  // per-project override was rejected for.
+  async function saveWorkspacePermission(key: PermissionKey, value: boolean) {
+    const effective = effectivePermissions(member.role, member.permission_overrides)
+    try {
+      await updateWorkspaceMember(workspaceId, member.user_id, {
+        permissions: diffFromRoleDefaults(member.role, { ...effective, [key]: value }),
+      })
+      onRefetchMembers()
+      addToast({ variant: "success", title: "Permission saved" })
+    } catch (err) {
+      addToast({ variant: "error", title: "Couldn't update permission", description: extractErrorMessage(err) })
+    }
+  }
+
+  async function handleRemove() {
+    if (!window.confirm(`Remove ${member.username} from this workspace? They'll lose access to every project in it.`)) {
+      return
+    }
+    try {
+      await removeWorkspaceMember(workspaceId, member.user_id)
+      addToast({ variant: "success", title: "Member removed" })
+      onRefetchMembers()
+    } catch (err) {
+      addToast({ variant: "error", title: "Couldn't remove member", description: extractErrorMessage(err) })
     }
   }
 
@@ -157,6 +199,19 @@ export function MemberRow({
           ) : (
             <Badge variant="secondary">{roleLabel(member.role)}</Badge>
           )}
+
+          {!selfIsSuperAdmin && canManage && !isSelf && !isOwner && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8 text-muted-foreground hover:text-destructive"
+              onClick={handleRemove}
+              title="Remove from workspace"
+              aria-label={`Remove ${member.username} from workspace`}
+            >
+              <UserX className="size-4" />
+            </Button>
+          )}
         </div>
       </div>
 
@@ -169,6 +224,29 @@ export function MemberRow({
             </p>
           ) : (
             <>
+              <div>
+                <p className="mb-1.5 text-sm font-medium text-foreground">Workspace Permissions</p>
+                <p className="mb-1.5 text-xs text-muted-foreground">
+                  Applies everywhere they don't have a project-specific override below. Unlike a
+                  project override, this can grant a permission beyond their role's defaults.
+                </p>
+                <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
+                  {PERMISSION_KEYS.map((key) => {
+                    const effective = effectivePermissions(member.role, member.permission_overrides)
+                    return (
+                      <label key={key} className="flex items-center justify-between gap-2 text-xs">
+                        <span className="text-muted-foreground">{PERMISSION_LABELS[key]}</span>
+                        <Switch
+                          disabled={!canManage || isSelf}
+                          checked={effective[key]}
+                          onCheckedChange={(v) => saveWorkspacePermission(key, v)}
+                        />
+                      </label>
+                    )
+                  })}
+                </div>
+              </div>
+
               {overrides.length === 0 && (
                 <p className="text-xs text-muted-foreground">
                   No project-specific overrides — this member follows their workspace role/permissions
@@ -194,7 +272,11 @@ export function MemberRow({
                               disabled={!canManage || isSelf}
                               checked={effective[key]}
                               onCheckedChange={(v) =>
-                                savePermissions(o.project.id, { ...effective, [key]: v }, false)
+                                savePermissions(
+                                  o.project.id,
+                                  diffFromRoleDefaults(o.role, { ...effective, [key]: v }),
+                                  !o.hasExplicitAccess
+                                )
                               }
                             />
                           </label>
@@ -247,7 +329,9 @@ export function MemberRow({
                             <Button
                               size="sm"
                               variant="brand"
-                              onClick={() => savePermissions(addingProjectId, draftPermissions, true)}
+                              onClick={() =>
+                                savePermissions(addingProjectId, diffFromRoleDefaults(member.role, draftPermissions), true)
+                              }
                             >
                               Save override
                             </Button>

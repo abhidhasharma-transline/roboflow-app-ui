@@ -8,6 +8,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { useToastStore } from "@/stores/toastStore"
+import { PageLoader } from "@/components/shared/PageLoader"
 import { listTrashedVersions, restoreVersion, type ProjectVersion } from "@/lib/versionApi"
 
 export function VersionTrashDialog({
@@ -65,7 +66,7 @@ export function VersionTrashDialog({
 
         <div className="max-h-80 overflow-y-auto">
           {loading ? (
-            <p className="py-6 text-center text-sm text-muted-foreground">Loading…</p>
+            <PageLoader />
           ) : trashed.length === 0 ? (
             <p className="py-6 text-center text-sm text-muted-foreground">Trash is empty.</p>
           ) : (

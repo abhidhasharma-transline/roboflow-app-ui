@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
 import { ChevronUp, ChevronDown, X, RotateCcw } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { initiateVideoUpload, probeVideo, triggerExtraction } from "@/lib/uploadApi"
+import { initiateVideoUpload, probeVideo, triggerExtraction, discardBatch } from "@/lib/uploadApi"
 import { samplingPresets } from "@/lib/videoSampling"
 import { useExtractionProgress } from "@/hooks/useExtractionProgress"
 
@@ -25,6 +25,18 @@ interface VideoExtractorProps {
   tagNames: string[]
   /** Called once extraction finishes successfully, with the batch to load. */
   onExtractionComplete: (batchId: string) => void
+  /** Called once extraction finishes but produced zero new images (every
+   *  frame deduped against images already in the project) — the batch has
+   *  already been discarded by the time this fires, nothing left to clean
+   *  up on the caller's side. */
+  onExtractionEmpty: () => void
+  /** Called the moment the video is actually committed (batch created,
+   *  video durably in storage) — well before extraction itself finishes.
+   *  From here on there's a real, server-side batch that shouldn't be
+   *  silently abandoned if the user navigates away mid-extraction, so the
+   *  caller should treat this the same as an unsaved image upload (see
+   *  useUnsavedUploadGuard) rather than waiting for onExtractionComplete. */
+  onBatchCommitted: (batchId: string) => void
   /** Nothing was ever uploaded at this point, so there's genuinely nothing to clean up. */
   onSkip: () => void
 }
@@ -38,6 +50,8 @@ const FILMSTRIP_FRAME_COUNT = 15
 // demand hundreds of live canvas captures.
 const PREVIEW_MIN_FRAMES = 8
 const PREVIEW_MAX_FRAMES = 150
+// Matches Roboflow's own reference filmstrip density.
+const TARGET_THUMB_WIDTH = 56
 const ASSUMED_FPS = 30
 const MIN_RANGE_SECONDS = 0.5
 
@@ -65,6 +79,8 @@ export function VideoExtractor({
   batchName,
   tagNames,
   onExtractionComplete,
+  onExtractionEmpty,
+  onBatchCommitted,
   onSkip,
 }: VideoExtractorProps) {
   const playerRef = useRef<HTMLVideoElement>(null)
@@ -111,7 +127,7 @@ export function VideoExtractor({
 
   const [rangeStart, setRangeStart] = useState(0)
   const [rangeEnd, setRangeEnd] = useState(0)
-  const [draggingHandle, setDraggingHandle] = useState<"start" | "end" | null>(null)
+  const [draggingHandle, setDraggingHandle] = useState<"start" | "end" | "scrub" | null>(null)
 
   // The source video's own frame rate — a purely client-side estimate
   // (duration / interval) can't know this, so it happily shows counts
@@ -136,30 +152,35 @@ export function VideoExtractor({
     }
   }, [workspaceId, projectId, file])
 
-  const presets = useMemo(() => (duration > 0 ? samplingPresets(duration) : []), [duration])
+  const presets = useMemo(
+    () => (duration > 0 ? samplingPresets(duration, nativeFps) : []),
+    [duration, nativeFps]
+  )
   const minInterval = presets.length ? Math.min(...presets.map((p) => p.interval)) : 1 / 60
   const maxInterval = presets.length ? Math.max(...presets.map((p) => p.interval)) : 60
 
   const [frameInterval, setFrameInterval] = useState(1)
 
-  // Debounced so dragging the rate slider doesn't fire off a fresh round of
-  // canvas seeks+captures on every intermediate value — only once the user
-  // actually settles on a rate.
-  const [debouncedInterval, setDebouncedInterval] = useState(frameInterval)
-  useEffect(() => {
-    const t = window.setTimeout(() => setDebouncedInterval(frameInterval), 350)
-    return () => window.clearTimeout(t)
-  }, [frameInterval])
-
+  // Roboflow's own filmstrip keeps a fixed, comfortable thumbnail size
+  // regardless of the sampling rate — a 60fps preset over a 2-minute clip
+  // shouldn't force 150 slivers into one row. Sized off the strip's own
+  // rendered width (filmstripWidth, tracked below) rather than the
+  // sampling interval — the trim-handle drag (handlePointerMove) and
+  // click-to-seek both work off raw pixel-position ÷ duration, never off
+  // cell count, so this doesn't affect either interaction, and it also
+  // means editing the interval/count fields no longer touches the
+  // filmstrip at all (previously every edit forced a full re-seek+capture
+  // pass — see desiredFilmstripCount's old dependency on frameInterval).
   const desiredFilmstripCount = useMemo(() => {
-    if (duration <= 0 || debouncedInterval <= 0) return FILMSTRIP_FRAME_COUNT
+    if (!filmstripWidth) return FILMSTRIP_FRAME_COUNT
     return Math.min(
       PREVIEW_MAX_FRAMES,
-      Math.max(PREVIEW_MIN_FRAMES, Math.round(duration / debouncedInterval))
+      Math.max(PREVIEW_MIN_FRAMES, Math.round(filmstripWidth / TARGET_THUMB_WIDTH))
     )
-  }, [duration, debouncedInterval])
+  }, [filmstripWidth])
 
   const [phase, setPhase] = useState<"idle" | "uploading" | "extracting">("idle")
+  const [uploadPercent, setUploadPercent] = useState(0)
   const [videoUploadId, setVideoUploadId] = useState<string | null>(null)
   const [committedBatchId, setCommittedBatchId] = useState<string | null>(null)
   const [uploadError, setUploadError] = useState<string | null>(null)
@@ -170,7 +191,7 @@ export function VideoExtractor({
   useEffect(() => {
     if (duration > 0 && rangeEnd === 0) {
       setRangeEnd(duration)
-      const def = samplingPresets(duration).find((p) => p.default)
+      const def = samplingPresets(duration, nativeFps).find((p) => p.default)
       if (def) setFrameInterval(def.interval)
     }
   }, [duration, rangeEnd])
@@ -326,13 +347,16 @@ export function VideoExtractor({
   // Capped at what the source can actually deliver over the trimmed range
   // — matches the same cap the celery worker applies at extraction time,
   // so this number never over-promises what "Extract N Frames" produces.
+  // Inclusive of both endpoints (t=0 and the last in-range grid point) —
+  // matches Roboflow's own count; app/workers/tasks.py's extraction
+  // explicitly grabs that trailing frame too, so this is a real promise.
   const outputCount =
     frameInterval > 0
       ? Math.max(
           1,
           Math.min(
-            Math.round(trimmedDuration / frameInterval),
-            nativeFps != null ? Math.floor(trimmedDuration * nativeFps) : Infinity
+            Math.floor(trimmedDuration / frameInterval) + 1,
+            nativeFps != null ? Math.floor(trimmedDuration * nativeFps) + 1 : Infinity
           )
         )
       : 0
@@ -348,11 +372,30 @@ export function VideoExtractor({
   const [intervalDraft, setIntervalDraft] = useState(() => String(frameInterval))
   const [countDraft, setCountDraft] = useState(() => String(outputCount))
 
+  // Whichever of these two fields the user is actively typing into sets its
+  // own "skip" flag right before committing frameInterval, so the very next
+  // resync (below) leaves ITS OWN draft text alone — the other field still
+  // updates live to stay in sync. Without this, typing "78" character by
+  // character in the images field committed a new frameInterval after the
+  // "7", which recomputed outputCount and immediately overwrote the draft
+  // back to that recomputed value before "8" could ever be appended — the
+  // field only ever seemed to accept one "effective" digit at a time.
+  const skipIntervalSyncRef = useRef(false)
+  const skipCountSyncRef = useRef(false)
+
   useEffect(() => {
+    if (skipIntervalSyncRef.current) {
+      skipIntervalSyncRef.current = false
+      return
+    }
     setIntervalDraft(String(Number(frameInterval.toFixed(3))))
   }, [frameInterval])
 
   useEffect(() => {
+    if (skipCountSyncRef.current) {
+      skipCountSyncRef.current = false
+      return
+    }
     setCountDraft(String(outputCount))
   }, [outputCount])
 
@@ -392,9 +435,15 @@ export function VideoExtractor({
         const next = Math.min(t, rangeEnd - MIN_RANGE_SECONDS)
         setRangeStart(next)
         seekTo(next)
-      } else {
+      } else if (draggingHandle === "end") {
         const next = Math.max(t, rangeStart + MIN_RANGE_SECONDS)
         setRangeEnd(next)
+      } else {
+        // Scrubbing the filmstrip body itself (not a trim handle) — moves
+        // playback continuously as the pointer moves, the same way
+        // dragging a normal video timeline works, instead of only jumping
+        // once on a plain click.
+        seekTo(t)
       }
     },
     [draggingHandle, duration, rangeStart, rangeEnd]
@@ -437,13 +486,21 @@ export function VideoExtractor({
   // ── The actual commit point — nothing has touched the server before this. ──
   async function handleExtract() {
     setUploadError(null)
+    setUploadPercent(0)
     setPhase("uploading")
     try {
-      const initiated = await initiateVideoUpload(workspaceId, projectId, file, {
-        batchName,
-        tagNames,
-      })
+      const initiated = await initiateVideoUpload(
+        workspaceId, projectId, file,
+        {
+          batchName,
+          tagNames,
+          probedDuration: duration || undefined,
+          probedNativeFps: nativeFps ?? undefined,
+        },
+        setUploadPercent
+      )
       setCommittedBatchId(initiated.batch_id)
+      onBatchCommitted(initiated.batch_id)
       setPhase("extracting")
       const res = await triggerExtraction(
         workspaceId,
@@ -462,10 +519,20 @@ export function VideoExtractor({
   }
 
   useEffect(() => {
-    if (progress?.status === "done" && committedBatchId) {
+    if (progress?.status !== "done" || !committedBatchId) return
+    if (progress.saved === 0) {
+      // Every frame the sampling rate would have extracted deduped against
+      // images already in the project — there's nothing new to review.
+      // Landing on a permanently-empty Batch Review screen (with a "Save
+      // and Continue" that has nothing to save) is a dead end; discard the
+      // now-pointless empty batch instead and tell the caller so it can
+      // go back to a plain upload screen.
+      discardBatch(workspaceId, projectId, committedBatchId).catch(() => {})
+      onExtractionEmpty()
+    } else {
       onExtractionComplete(committedBatchId)
     }
-  }, [progress?.status, committedBatchId, onExtractionComplete])
+  }, [progress?.status, progress?.saved, committedBatchId, onExtractionComplete, onExtractionEmpty, workspaceId, projectId])
 
   return (
     <Dialog open={open} onOpenChange={phase !== "idle" ? undefined : onOpenChange}>
@@ -479,7 +546,13 @@ export function VideoExtractor({
           </DialogTitle>
         </DialogHeader>
 
-        <div className="max-h-[80vh] overflow-y-auto p-6">
+        {/* Scrolls exactly like before — just without the visible
+            scrollbar track/thumb, matching how a lot of polished apps
+            treat an internal scroll panel. scrollbar-width covers
+            Firefox, ::-webkit-scrollbar covers Chromium/Safari; wheel,
+            touch, and keyboard scrolling all still work normally either
+            way, this only hides the drawn bar itself. */}
+        <div className="max-h-[80vh] overflow-y-auto p-6 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <video ref={setThumbVideoEl} muted className="hidden" />
           <canvas ref={setCanvasEl} className="hidden" />
 
@@ -539,11 +612,18 @@ export function VideoExtractor({
 
               <div
                 ref={filmstripRef}
-                onClick={(e) => {
+                onPointerDown={(e) => {
+                  // A plain click (no drag) still seeks once, same as
+                  // before — this just also lets holding and dragging
+                  // across the strip scrub playback continuously, the way
+                  // a normal video timeline works. Handles' own
+                  // onPointerDown (below) call stopPropagation, so pressing
+                  // directly on a trim handle never starts a scrub here.
                   if (!filmstripRef.current || !duration) return
                   const rect = filmstripRef.current.getBoundingClientRect()
                   const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
                   seekTo(pct * duration)
+                  setDraggingHandle("scrub")
                 }}
                 style={{ height: filmstripHeight }}
                 className="relative mt-2 flex cursor-pointer overflow-hidden rounded-md border border-border bg-muted select-none"
@@ -608,7 +688,9 @@ export function VideoExtractor({
                       className="absolute top-0 z-10 flex h-full w-4 -translate-x-1/2 cursor-ew-resize items-center justify-center"
                       style={{ left: `${(rangeStart / duration) * 100}%` }}
                     >
-                      <div className="h-full w-2.5 rounded-full bg-brand shadow-sm" />
+                      <div className="relative h-full w-1.5 rounded-full bg-brand shadow-sm">
+                        <div className="absolute top-1/2 left-1/2 h-2/5 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white" />
+                      </div>
                     </div>
                     <div
                       onPointerDown={(e) => {
@@ -620,7 +702,9 @@ export function VideoExtractor({
                       className="absolute top-0 z-10 flex h-full w-4 -translate-x-1/2 cursor-ew-resize items-center justify-center"
                       style={{ left: `${(rangeEnd / duration) * 100}%` }}
                     >
-                      <div className="h-full w-2.5 rounded-full bg-brand shadow-sm" />
+                      <div className="relative h-full w-1.5 rounded-full bg-brand shadow-sm">
+                        <div className="absolute top-1/2 left-1/2 h-2/5 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white" />
+                      </div>
                     </div>
                   </>
                 )}
@@ -745,6 +829,7 @@ export function VideoExtractor({
                       setIntervalDraft(e.target.value)
                       const parsed = Number(e.target.value)
                       if (e.target.value.trim() !== "" && !Number.isNaN(parsed)) {
+                        skipIntervalSyncRef.current = true
                         setFrameInterval(Math.max(minInterval, Math.min(maxInterval, parsed)))
                       }
                     }}
@@ -760,11 +845,12 @@ export function VideoExtractor({
                       setCountDraft(e.target.value)
                       const parsed = Number(e.target.value)
                       if (e.target.value.trim() !== "" && !Number.isNaN(parsed) && parsed >= 1) {
+                        skipCountSyncRef.current = true
                         setFrameInterval(trimmedDuration / parsed)
                       }
                     }}
                     onBlur={() => setCountDraft(String(outputCount))}
-                    className="h-8 w-20"
+                    className="h-8 w-20 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                   />
                   images)
                 </div>
@@ -774,9 +860,10 @@ export function VideoExtractor({
             </>
           ) : phase === "uploading" ? (
             <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-              <p className="text-lg font-semibold text-brand">Processing files…</p>
+              <p className="text-lg font-semibold text-brand">Uploading video…</p>
               <p className="font-mono text-xs text-muted-foreground">{file.name}</p>
-              <Progress value={0} className="w-full max-w-sm" />
+              <Progress value={uploadPercent} className="w-full max-w-sm" />
+              <p className="text-xs text-muted-foreground">{uploadPercent}%</p>
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">

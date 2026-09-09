@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { BarChart3 } from "lucide-react"
 import { SectionHeading } from "@/components/shared/SectionHeading"
+import { PageLoader } from "@/components/shared/PageLoader"
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
 import { getMyActivity } from "@/lib/authApi"
 import type { ActivityDay } from "@/types/auth"
@@ -105,7 +106,7 @@ export function ActivityStreakCard() {
       </p>
 
       {isLoading ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <PageLoader />
       ) : (
         <>
           {/* Month labels */}

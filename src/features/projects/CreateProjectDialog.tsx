@@ -79,7 +79,7 @@ export function CreateProjectDialog({
       onCreated?.()
       reset()
       onOpenChange(false)
-      navigate(`/projects/${project.id}/train`)
+      navigate(`/projects/${project.id}/upload`)
     } catch (err) {
       setError(extractErrorMessage(err))
     } finally {

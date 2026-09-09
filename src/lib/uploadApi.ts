@@ -138,13 +138,18 @@ export async function initiateVideoUpload(
   workspaceId: string,
   projectId: string,
   file: File,
-  opts: { batchName: string; tagNames: string[] },
+  opts: { batchName: string; tagNames: string[]; probedDuration?: number; probedNativeFps?: number },
   onProgress?: (percent: number) => void
 ): Promise<VideoInitiateResponse> {
   const form = new FormData()
   form.append("file", file)
   form.append("batch_name", opts.batchName)
   form.append("tag_names", opts.tagNames.join(","))
+  // Already known from this same file's earlier /video/probe call — passing
+  // it along lets the backend skip re-running its expensive frame-counting
+  // ffprobe a second time (see route.py's own comment on this field).
+  if (opts.probedDuration != null) form.append("probed_duration", String(opts.probedDuration))
+  if (opts.probedNativeFps != null) form.append("probed_native_fps", String(opts.probedNativeFps))
 
   const res = await api.post<VideoInitiateResponse>(
     `${uploadBase(workspaceId, projectId)}/video/initiate`,

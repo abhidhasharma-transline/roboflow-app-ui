@@ -36,7 +36,6 @@ export interface ProjectImageSummary {
   split: "train" | "valid" | "test" | null
   width: number | null
   height: number | null
-  is_duplicate: boolean
   annotations: ProjectImageAnnotation[]
   tag_count: number
   is_null: boolean

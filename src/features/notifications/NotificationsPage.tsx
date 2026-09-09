@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { useNavigate } from "react-router-dom"
 import { Bell, Check } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -7,6 +8,8 @@ import {
   markAllNotificationsRead,
   type AppNotification,
 } from "@/lib/notificationApi"
+import { useWorkspaceStore } from "@/stores/workspaceStore"
+import { PageLoader } from "@/components/shared/PageLoader"
 
 function timeAgo(iso: string) {
   const diffMs = Date.now() - new Date(iso).getTime()
@@ -24,6 +27,9 @@ export function NotificationsPage() {
   const [notifications, setNotifications] = useState<AppNotification[]>([])
   const [loading, setLoading] = useState(true)
   const [markingAll, setMarkingAll] = useState(false)
+  const navigate = useNavigate()
+  const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace)
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
 
   function refetch() {
     setLoading(true)
@@ -33,12 +39,24 @@ export function NotificationsPage() {
   useEffect(refetch, [])
 
   async function handleClick(n: AppNotification) {
-    if (n.is_read) return
-    setNotifications((prev) => prev.map((x) => (x.id === n.id ? { ...x, is_read: true } : x)))
-    try {
-      await markNotificationRead(n.id)
-    } catch {
-      setNotifications((prev) => prev.map((x) => (x.id === n.id ? { ...x, is_read: false } : x)))
+    if (!n.is_read) {
+      setNotifications((prev) => prev.map((x) => (x.id === n.id ? { ...x, is_read: true } : x)))
+      try {
+        await markNotificationRead(n.id)
+      } catch {
+        setNotifications((prev) => prev.map((x) => (x.id === n.id ? { ...x, is_read: false } : x)))
+      }
+    }
+    // "You were assigned to review X" / "N image(s) sent back for changes in
+    // X" both carry entity_type="job" — jump straight to that job's page
+    // instead of leaving the click a dead end (previously this only ever
+    // marked-read, so a Reviewer had no way to actually reach the job they
+    // were just notified about).
+    if (n.entity_type === "job" && n.entity_id && n.project_id) {
+      if (n.workspace_id && n.workspace_id !== activeWorkspaceId) {
+        setActiveWorkspace(n.workspace_id)
+      }
+      navigate(`/projects/${n.project_id}/annotate/job/${n.entity_id}`)
     }
   }
 
@@ -71,7 +89,7 @@ export function NotificationsPage() {
         </div>
 
         {loading ? (
-          <p className="text-sm text-muted-foreground">Loading…</p>
+          <PageLoader />
         ) : notifications.length === 0 ? (
           <div className="flex h-48 flex-col items-center justify-center rounded-lg border border-dashed border-border text-center">
             <Bell className="mb-2 size-6 text-muted-foreground" />

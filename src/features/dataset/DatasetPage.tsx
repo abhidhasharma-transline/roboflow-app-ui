@@ -43,6 +43,7 @@ import { TagInput } from "@/components/shared/TagInput"
 import { useWorkspaceStore } from "@/stores/workspaceStore"
 import { useToastStore } from "@/stores/toastStore"
 import { useProject } from "@/hooks/useProjects"
+import { PageLoader } from "@/components/shared/PageLoader"
 import { listProjectImages, bulkSetSplit, markImagesNull, type ProjectImageSummary } from "@/lib/imageApi"
 import { removeImageFromProject } from "@/lib/commentApi"
 import { listClasses, type ProjectClass } from "@/lib/classApi"
@@ -123,6 +124,11 @@ export function DatasetPage() {
   const workspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   const addToast = useToastStore((s) => s.addToast)
   const { project } = useProject(projectId)
+  // A Reviewer can't tag images — see ProjectSidebar.tsx for the same flag.
+  // Hides "Add Tags & Metadata" wholesale rather than only the tags half,
+  // since the two apply in one sequential action and a blocked tag call
+  // would otherwise abort the metadata half too.
+  const canManageImages = project?.my_permissions?.label_images !== false
 
   const [images, setImages] = useState<ProjectImageSummary[]>([])
   const [total, setTotal] = useState(0)
@@ -399,7 +405,7 @@ export function DatasetPage() {
         </div>
 
         {loading ? (
-          <p className="py-16 text-center text-sm text-muted-foreground">Loading…</p>
+          <PageLoader />
         ) : images.length === 0 ? (
           <p className="py-16 text-center text-sm text-muted-foreground">
             No images in the dataset yet — add annotated images to it from the Annotate page.
@@ -558,10 +564,12 @@ export function DatasetPage() {
             <Checkbox checked={allVisibleSelected} onCheckedChange={toggleSelectAll} />
             <span className="text-sm font-medium text-foreground">{selectedIds.length} images selected</span>
             <div className="mx-1 h-5 w-px bg-border" />
-            <Button variant="outline" size="sm" onClick={() => setTagDialogOpen(true)} disabled={selectedIds.length === 0}>
-              <TagIcon className="size-3.5" />
-              Add Tags & Metadata
-            </Button>
+            {canManageImages && (
+              <Button variant="outline" size="sm" onClick={() => setTagDialogOpen(true)} disabled={selectedIds.length === 0}>
+                <TagIcon className="size-3.5" />
+                Add Tags & Metadata
+              </Button>
+            )}
             <Button variant="outline" size="sm" onClick={() => setAssignPanelOpen(true)} disabled={selectedIds.length === 0}>
               <UserPlus className="size-3.5" />
               Assign for Labeling
@@ -580,16 +588,18 @@ export function DatasetPage() {
               <SplitSquareHorizontal className="size-3.5" />
               Change Dataset Split
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-destructive hover:text-destructive"
-              onClick={handleDeleteSelected}
-              disabled={selectedIds.length === 0 || deletingSelected}
-            >
-              <Trash2 className="size-3.5" />
-              {deletingSelected ? "Deleting…" : "Delete Images"}
-            </Button>
+            {canManageImages && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-destructive hover:text-destructive"
+                onClick={handleDeleteSelected}
+                disabled={selectedIds.length === 0 || deletingSelected}
+              >
+                <Trash2 className="size-3.5" />
+                {deletingSelected ? "Deleting…" : "Delete Images"}
+              </Button>
+            )}
             <Button variant="outline" size="sm" onClick={() => setExportDialogOpen(true)}>
               <Download className="size-3.5" />
               Export

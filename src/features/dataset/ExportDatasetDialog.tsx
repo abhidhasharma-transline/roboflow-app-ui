@@ -27,6 +27,7 @@ import {
 import { listProjectImages } from "@/lib/imageApi"
 import { startDatasetExport, getDatasetExportStatus, checkDatasetHasPolygon } from "@/lib/exportApi"
 import { YOLO_FORMATS, supportsSegmentation, SUGGESTED_SEGMENTATION_FORMAT } from "@/lib/yoloVersions"
+import { useToastStore } from "@/stores/toastStore"
 import type { ProjectAnnotationType } from "@/types/project"
 
 const POLL_INTERVAL_MS = 2000
@@ -70,6 +71,16 @@ export function ExportDatasetDialog({
   const [message, setMessage] = useState("")
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const addToast = useToastStore((s) => s.addToast)
+  const removeToast = useToastStore((s) => s.removeToast)
+  const toastIdRef = useRef<string | null>(null)
+
+  function clearProgressToast() {
+    if (toastIdRef.current) {
+      removeToast(toastIdRef.current)
+      toastIdRef.current = null
+    }
+  }
 
   function stopPolling() {
     if (pollRef.current) {
@@ -81,6 +92,7 @@ export function ExportDatasetDialog({
   useEffect(() => {
     if (!open) {
       stopPolling()
+      clearProgressToast()
       return
     }
     setPhase("idle")
@@ -109,6 +121,7 @@ export function ExportDatasetDialog({
     setPhase("exporting")
     setPercent(0)
     setMessage("Starting export…")
+    toastIdRef.current = addToast({ variant: "loading", title: "Preparing export…" })
     try {
       const { export_id } = await startDatasetExport(workspaceId, projectId, format)
       let attempts = 0
@@ -118,6 +131,8 @@ export function ExportDatasetDialog({
           stopPolling()
           setPhase("error")
           setMessage("This is taking longer than expected — try again in a bit.")
+          clearProgressToast()
+          addToast({ variant: "error", title: "Export is taking too long", description: "Please try again in a bit." })
           return
         }
         try {
@@ -128,10 +143,14 @@ export function ExportDatasetDialog({
             stopPolling()
             setPhase("ready")
             setDownloadUrl(res.download_url ?? null)
+            clearProgressToast()
+            addToast({ variant: "success", title: "Export ready" })
           } else if (res.status === "failed") {
             stopPolling()
             setPhase("error")
             setMessage(res.message || "Export failed — please try again.")
+            clearProgressToast()
+            addToast({ variant: "error", title: "Export failed", description: res.message || "Please try again." })
           }
         } catch {
           // transient network hiccup — next tick retries, capped by MAX_POLL_ATTEMPTS
@@ -140,6 +159,8 @@ export function ExportDatasetDialog({
     } catch {
       setPhase("error")
       setMessage("Couldn't start the export — please try again.")
+      clearProgressToast()
+      addToast({ variant: "error", title: "Couldn't start the export", description: "Please try again." })
     }
   }
 

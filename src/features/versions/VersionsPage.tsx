@@ -17,10 +17,22 @@ import { useToastStore } from "@/stores/toastStore"
 import { useProject } from "@/hooks/useProjects"
 import { listProjectImages, type ProjectImageSummary } from "@/lib/imageApi"
 import { listClasses } from "@/lib/classApi"
-import { listVersions, createVersion, type ProjectVersion, type PreprocessingConfig, type ResizeMode } from "@/lib/versionApi"
-import { AutoOrientDialog, ResizeDialog, PreprocessingOptionsDialog } from "./PreprocessingDialogs"
+import {
+  listVersions, createVersion,
+  type ProjectVersion, type PreprocessingConfig, type ResizeMode, type AutoContrastType,
+} from "@/lib/versionApi"
+import {
+  AutoOrientDialog, ResizeDialog, PreprocessingOptionsDialog, AutoContrastDialog, RandomSampleDialog,
+  AUTO_CONTRAST_TYPE_LABELS,
+} from "./PreprocessingDialogs"
 import { RebalanceSplitsDialog } from "./RebalanceSplitsDialog"
 import { AugmentationOptionsDialog, type AugmentationType } from "./AugmentationOptionsDialog"
+import {
+  SliderAugmentationDialog, FlipDialog, BrightnessDialog,
+  Rotate90Dialog, ShearDialog, CropDialog, GrayscaleAugDialog,
+} from "./AugmentationDialogs"
+import { preprocessingPreviewStyle } from "@/lib/versionPreview"
+import { PageLoader } from "@/components/shared/PageLoader"
 import { VersionDetailView } from "./VersionDetailView"
 import { VersionTrashDialog } from "./VersionTrashDialog"
 
@@ -43,7 +55,10 @@ type StepNum = 1 | 2 | 3 | 4 | 5
 
 // Matches Roboflow's own default: a timestamp shown as a placeholder (not a
 // pre-filled value) — the field starts empty and this is just the name that
-// gets used if the user never types their own.
+// gets used if the user never types their own. The "v1"/"v2"/"v3" ordinal
+// badge next to the name (see VersionImagesPage.tsx's `ordinals` map) is
+// what actually tells creation order apart — the name itself stays the
+// timestamp.
 function defaultVersionName() {
   const now = new Date()
   const y = now.getFullYear()
@@ -119,9 +134,42 @@ export function VersionsPage() {
   const [autoOrientOpen, setAutoOrientOpen] = useState(false)
   const [resizeOpen, setResizeOpen] = useState(false)
   const [preprocessingOptionsOpen, setPreprocessingOptionsOpen] = useState(false)
+  const [autoContrastOpen, setAutoContrastOpen] = useState(false)
+  const [randomSampleOpen, setRandomSampleOpen] = useState(false)
 
   const [augmentations, setAugmentations] = useState<Record<string, AugmentationType>>({})
   const [augDialogOpen, setAugDialogOpen] = useState(false)
+  const [flipOpen, setFlipOpen] = useState(false)
+  const [hueOpen, setHueOpen] = useState(false)
+  const [rotationOpen, setRotationOpen] = useState(false)
+  const [saturationOpen, setSaturationOpen] = useState(false)
+  const [exposureOpen, setExposureOpen] = useState(false)
+  const [brightnessOpen, setBrightnessOpen] = useState(false)
+  const [blurOpen, setBlurOpen] = useState(false)
+  const [rotate90Open, setRotate90Open] = useState(false)
+  const [shearOpen, setShearOpen] = useState(false)
+  const [cropOpen, setCropOpen] = useState(false)
+  const [noiseOpen, setNoiseOpen] = useState(false)
+  const [grayscaleAugOpen, setGrayscaleAugOpen] = useState(false)
+
+  // Shared by the picker tile's onSelect (open instead of instant-apply)
+  // and the review step's "Edit" link (reopen with the values already
+  // chosen) — all 12 configurable augmentation types have a real
+  // configuration dialog now.
+  const AUGMENTATION_DIALOG_OPENERS: Record<string, () => void> = {
+    flip: () => setFlipOpen(true),
+    hue: () => setHueOpen(true),
+    rotation: () => setRotationOpen(true),
+    saturation: () => setSaturationOpen(true),
+    exposure: () => setExposureOpen(true),
+    brightness: () => setBrightnessOpen(true),
+    blur: () => setBlurOpen(true),
+    rotate90: () => setRotate90Open(true),
+    shear: () => setShearOpen(true),
+    crop: () => setCropOpen(true),
+    noise: () => setNoiseOpen(true),
+    grayscale: () => setGrayscaleAugOpen(true),
+  }
 
   function refetchVersions() {
     if (!workspaceId || !projectId) return
@@ -163,13 +211,27 @@ export function VersionsPage() {
   // clicked, so re-clicking it always lands on a visibly fresh step 1
   // instead of silently reusing whatever step/name was left over from a
   // previous, abandoned attempt (confusing — looked like the click did
-  // nothing).
-  function resetVersionWizard() {
+  // nothing). Takes the version list explicitly rather than always reading
+  // component state: right after creating a version, `versions` state
+  // hasn't re-rendered yet (setVersions is async), so a caller that just
+  // created one passes `[created, ...versions]` itself instead of this
+  // silently seeing a stale, one-version-behind list.
+  function resetVersionWizard(existingVersions: ProjectVersion[] = versions) {
     setStep(1)
     setVersionName("")
     setVersionNamePlaceholder(defaultVersionName())
     setVersionNote("")
-    setPreprocessing({ auto_orient: true, resize: { mode: "stretch", width: 640, height: 512 } })
+    // Only the resize target carries over from the most recent version —
+    // re-typing the same width/height for every new version was the actual
+    // complaint. Grayscale/auto-contrast/random-sample are per-version
+    // choices that don't default to "on" just because a previous version
+    // happened to use them; each new version starts without them, same as
+    // before this change.
+    const previousResize = existingVersions[0]?.preprocessing?.resize
+    setPreprocessing({
+      auto_orient: true,
+      resize: previousResize ?? { mode: "stretch", width: 640, height: 512 },
+    })
     setAugmentations({})
   }
 
@@ -178,8 +240,17 @@ export function VersionsPage() {
     const resolvedName = versionName.trim() || versionNamePlaceholder
     setCreating(true)
     try {
+      // `params` (the chosen slider value / checkboxes for Flip, Hue,
+      // Rotation, Saturation, Exposure, Brightness, Blur) has to make it
+      // into the payload too — dropping it here (as this used to) meant
+      // the backend never saw anything but "this type is on", and fell
+      // back to its own old fixed default range no matter what the user
+      // picked in the dialog.
       const augmentationsPayload = Object.fromEntries(
-        Object.entries(augmentations).map(([id, aug]) => [id, { label: aug.label }])
+        Object.entries(augmentations).map(([id, aug]) => [
+          id,
+          aug.params ? { label: aug.label, params: aug.params } : { label: aug.label },
+        ])
       )
       const created = await createVersion(workspaceId, projectId, {
         name: resolvedName,
@@ -188,7 +259,7 @@ export function VersionsPage() {
         augmentations: augmentationsPayload,
       })
       addToast({ variant: "success", title: "Version created", description: resolvedName })
-      resetVersionWizard()
+      resetVersionWizard([created, ...versions])
       setVersions((prev) => [created, ...prev])
       setSelectedVersionId(created.id)
     } catch (err) {
@@ -201,6 +272,12 @@ export function VersionsPage() {
 
   const stepState = (n: StepNum): "done" | "current" | "future" =>
     n < step ? "done" : n === step ? "current" : "future"
+
+  // Augmentation runs AFTER preprocessing (both in the real export pipeline
+  // and in the wizard's own step order) — every augmentation dialog's
+  // preview should show whatever grayscale/contrast was already chosen,
+  // not silently revert to the untouched original.
+  const augmentationPreviewBase = preprocessingPreviewStyle(preprocessing)
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
@@ -221,7 +298,7 @@ export function VersionsPage() {
       <aside className="w-64 shrink-0 overflow-y-auto border-r border-border">
         <div className="p-3">
           {loadingVersions ? (
-            <p className="text-sm text-muted-foreground">Loading…</p>
+            <PageLoader />
           ) : versions.length === 0 ? (
             <p className="text-sm text-muted-foreground">No versions created yet.</p>
           ) : (
@@ -486,13 +563,45 @@ export function VersionsPage() {
                     {(["grayscale", "auto_contrast", "random_sample"] as const).map((id) =>
                       preprocessing[id] ? (
                         <div key={id} className="flex items-center justify-between p-3">
-                          <span className="text-sm font-medium text-foreground">{EXTRA_PREPROCESSING_LABELS[id]}</span>
-                          <button
-                            onClick={() => setPreprocessing((p) => ({ ...p, [id]: false }))}
-                            className="text-muted-foreground hover:text-foreground"
-                          >
-                            <XIcon className="size-3.5" />
-                          </button>
+                          <div>
+                            <span className="text-sm font-medium text-foreground">{EXTRA_PREPROCESSING_LABELS[id]}</span>
+                            {id === "auto_contrast" && (
+                              <p className="text-xs text-muted-foreground">
+                                {AUTO_CONTRAST_TYPE_LABELS[preprocessing.auto_contrast_type ?? "contrast_stretching"]}
+                              </p>
+                            )}
+                            {id === "random_sample" && preprocessing.random_sample_splits && (
+                              <p className="text-xs text-muted-foreground">
+                                Train {preprocessing.random_sample_splits.train}% · Valid{" "}
+                                {preprocessing.random_sample_splits.valid}% · Test{" "}
+                                {preprocessing.random_sample_splits.test}%
+                              </p>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-3">
+                            {id === "auto_contrast" && (
+                              <button
+                                onClick={() => setAutoContrastOpen(true)}
+                                className="text-xs font-medium text-brand hover:underline"
+                              >
+                                Edit
+                              </button>
+                            )}
+                            {id === "random_sample" && (
+                              <button
+                                onClick={() => setRandomSampleOpen(true)}
+                                className="text-xs font-medium text-brand hover:underline"
+                              >
+                                Edit
+                              </button>
+                            )}
+                            <button
+                              onClick={() => setPreprocessing((p) => ({ ...p, [id]: false }))}
+                              className="text-muted-foreground hover:text-foreground"
+                            >
+                              <XIcon className="size-3.5" />
+                            </button>
+                          </div>
                         </div>
                       ) : null
                     )}
@@ -560,18 +669,28 @@ export function VersionsPage() {
                       {Object.entries(augmentations).map(([id, aug]) => (
                         <div key={id} className="flex items-center justify-between p-3">
                           <span className="text-sm font-medium text-foreground">{aug.label}</span>
-                          <button
-                            onClick={() =>
-                              setAugmentations((prev) => {
-                                const next = { ...prev }
-                                delete next[id]
-                                return next
-                              })
-                            }
-                            className="text-muted-foreground hover:text-foreground"
-                          >
-                            <XIcon className="size-3.5" />
-                          </button>
+                          <div className="flex items-center gap-3">
+                            {AUGMENTATION_DIALOG_OPENERS[id] && (
+                              <button
+                                onClick={() => AUGMENTATION_DIALOG_OPENERS[id]?.()}
+                                className="text-xs font-medium text-brand hover:underline"
+                              >
+                                Edit
+                              </button>
+                            )}
+                            <button
+                              onClick={() =>
+                                setAugmentations((prev) => {
+                                  const next = { ...prev }
+                                  delete next[id]
+                                  return next
+                                })
+                              }
+                              className="text-muted-foreground hover:text-foreground"
+                            >
+                              <XIcon className="size-3.5" />
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -656,7 +775,39 @@ export function VersionsPage() {
         open={preprocessingOptionsOpen}
         onOpenChange={setPreprocessingOptionsOpen}
         thumbnailUrl={previewImages[0]?.thumbnail_url ?? null}
-        onSelect={(id) => setPreprocessing((p) => ({ ...p, [id]: true }))}
+        onSelect={(id) => {
+          // Grayscale is a plain on/off toggle — nothing to configure.
+          // Auto-Contrast and Random Sample each have real sub-options
+          // (algorithm type; per-split percentages), so picking either tile
+          // opens its own dialog instead of just flipping a boolean.
+          if (id === "auto_contrast") {
+            setAutoContrastOpen(true)
+            return
+          }
+          if (id === "random_sample") {
+            setRandomSampleOpen(true)
+            return
+          }
+          setPreprocessing((p) => ({ ...p, [id]: true }))
+        }}
+      />
+      <AutoContrastDialog
+        open={autoContrastOpen}
+        onOpenChange={setAutoContrastOpen}
+        thumbnailUrl={previewImages[0]?.thumbnail_url ?? null}
+        initialType={preprocessing.auto_contrast_type ?? "contrast_stretching"}
+        onApply={(type: AutoContrastType) =>
+          setPreprocessing((p) => ({ ...p, auto_contrast: true, auto_contrast_type: type }))
+        }
+      />
+      <RandomSampleDialog
+        open={randomSampleOpen}
+        onOpenChange={setRandomSampleOpen}
+        thumbnailUrl={previewImages[0]?.thumbnail_url ?? null}
+        initialSplits={preprocessing.random_sample_splits ?? { train: 100, valid: 100, test: 100 }}
+        onApply={(splits) =>
+          setPreprocessing((p) => ({ ...p, random_sample: true, random_sample_splits: splits }))
+        }
       />
 
       {workspaceId && projectId && (
@@ -675,7 +826,305 @@ export function VersionsPage() {
         open={augDialogOpen}
         onOpenChange={setAugDialogOpen}
         thumbnailUrl={previewImages[0]?.thumbnail_url ?? null}
-        onSelect={(aug) => setAugmentations((prev) => ({ ...prev, [aug.id]: aug }))}
+        onSelect={(aug) => {
+          // Every type now has its own configuration dialog
+          // (checkboxes/sliders) — none are instant-apply anymore.
+          const opener = AUGMENTATION_DIALOG_OPENERS[aug.id]
+          if (opener) {
+            opener()
+            return
+          }
+          setAugmentations((prev) => ({ ...prev, [aug.id]: aug }))
+        }}
+      />
+      <FlipDialog
+        open={flipOpen}
+        onOpenChange={setFlipOpen}
+        thumbnailUrl={previewImages[0]?.thumbnail_url ?? null}
+        baseStyle={augmentationPreviewBase}
+        initialHorizontal={(augmentations.flip?.params?.horizontal as boolean) ?? true}
+        initialVertical={(augmentations.flip?.params?.vertical as boolean) ?? false}
+        onApply={({ horizontal, vertical }) =>
+          setAugmentations((prev) => ({
+            ...prev,
+            flip: {
+              id: "flip",
+              label: horizontal && vertical ? "Flip (Horizontal + Vertical)" : horizontal ? "Flip (Horizontal)" : "Flip (Vertical)",
+              style: { transform: `${horizontal ? "scaleX(-1) " : ""}${vertical ? "scaleY(-1)" : ""}`.trim() },
+              params: { horizontal, vertical },
+            },
+          }))
+        }
+      />
+      <SliderAugmentationDialog
+        open={hueOpen}
+        onOpenChange={setHueOpen}
+        thumbnailUrl={previewImages[0]?.thumbnail_url ?? null}
+        baseStyle={augmentationPreviewBase}
+        title="Hue"
+        description="Randomly adjust the colors in the image."
+        infoTitle="What is hue augmentation?"
+        infoBody="It randomly changes the colors to make your model less sensitive."
+        min={0}
+        max={180}
+        unit="°"
+        initialValue={(augmentations.hue?.params?.max_degrees as number) ?? 15}
+        symmetric
+        previewStyle={(magnitude, sign) => ({ filter: `hue-rotate(${sign * magnitude}deg) saturate(1.3)` })}
+        onApply={(value) =>
+          setAugmentations((prev) => ({
+            ...prev,
+            hue: {
+              id: "hue",
+              label: `Hue (±${value}°)`,
+              style: { filter: `hue-rotate(${value}deg) saturate(1.3)` },
+              params: { max_degrees: value },
+            },
+          }))
+        }
+      />
+      <SliderAugmentationDialog
+        open={rotationOpen}
+        onOpenChange={setRotationOpen}
+        thumbnailUrl={previewImages[0]?.thumbnail_url ?? null}
+        baseStyle={augmentationPreviewBase}
+        title="Rotation"
+        description="Add variability to rotations to help your model be more resilient to camera roll."
+        infoTitle="Why should I use the Random Rotate augmentation?"
+        infoBody="It helps your model detect objects even when the camera or subject are not perfectly aligned."
+        min={0}
+        max={45}
+        unit="°"
+        initialValue={(augmentations.rotation?.params?.max_degrees as number) ?? 15}
+        symmetric
+        previewStyle={(magnitude, sign) => ({ transform: `rotate(${sign * magnitude}deg) scale(1.2)` })}
+        onApply={(value) =>
+          setAugmentations((prev) => ({
+            ...prev,
+            rotation: {
+              id: "rotation",
+              label: `Rotation (±${value}°)`,
+              style: { transform: `rotate(${value}deg) scale(1.2)` },
+              params: { max_degrees: value },
+            },
+          }))
+        }
+      />
+      <SliderAugmentationDialog
+        open={saturationOpen}
+        onOpenChange={setSaturationOpen}
+        thumbnailUrl={previewImages[0]?.thumbnail_url ?? null}
+        baseStyle={augmentationPreviewBase}
+        title="Saturation"
+        description="Randomly adjust the vibrancy of the colors in the images."
+        infoTitle="What is the saturation augmentation?"
+        infoBody="It randomly adjusts your images' colors to make them more or less vibrant."
+        min={0}
+        max={99}
+        unit="%"
+        initialValue={(augmentations.saturation?.params?.max_percent as number) ?? 25}
+        symmetric
+        previewStyle={(magnitude, sign) => ({
+          filter: `saturate(${Math.max(0, 1 + (sign * magnitude) / 100)})`,
+        })}
+        onApply={(value) =>
+          setAugmentations((prev) => ({
+            ...prev,
+            saturation: {
+              id: "saturation",
+              label: `Saturation (±${value}%)`,
+              style: { filter: `saturate(${1 + value / 100})` },
+              params: { max_percent: value },
+            },
+          }))
+        }
+      />
+      <SliderAugmentationDialog
+        open={exposureOpen}
+        onOpenChange={setExposureOpen}
+        thumbnailUrl={previewImages[0]?.thumbnail_url ?? null}
+        baseStyle={augmentationPreviewBase}
+        title="Exposure"
+        description="Add variability to image brightness to help your model be more resilient to lighting and camera setting changes."
+        infoTitle="What is the exposure augmentation?"
+        infoBody="It randomly brightens or darkens images to simulate different camera exposure settings."
+        min={0}
+        max={99}
+        unit="%"
+        initialValue={(augmentations.exposure?.params?.max_percent as number) ?? 10}
+        symmetric
+        previewStyle={(magnitude, sign) => ({
+          filter: `brightness(${Math.max(0, 1 + (sign * magnitude) / 100)}) contrast(1.1)`,
+        })}
+        onApply={(value) =>
+          setAugmentations((prev) => ({
+            ...prev,
+            exposure: {
+              id: "exposure",
+              label: `Exposure (±${value}%)`,
+              style: { filter: `brightness(${1 + value / 100}) contrast(1.1)` },
+              params: { max_percent: value },
+            },
+          }))
+        }
+      />
+      <SliderAugmentationDialog
+        open={blurOpen}
+        onOpenChange={setBlurOpen}
+        thumbnailUrl={previewImages[0]?.thumbnail_url ?? null}
+        baseStyle={augmentationPreviewBase}
+        title="Blur"
+        description="Add random Gaussian blur to help your model be more resilient to camera focus."
+        infoTitle="When should I use Random Blur?"
+        infoBody="If your subjects in-the-wild might not be in focus or your model is overfitting on hard edges."
+        min={0}
+        max={25}
+        unit="px"
+        initialValue={(augmentations.blur?.params?.max_px as number) ?? 2.5}
+        symmetric={false}
+        previewStyle={(magnitude) => ({ filter: `blur(${magnitude}px)` })}
+        onApply={(value) =>
+          setAugmentations((prev) => ({
+            ...prev,
+            blur: {
+              id: "blur",
+              label: `Blur (up to ${value}px)`,
+              style: { filter: `blur(${Math.min(value, 4)}px)` },
+              params: { max_px: value },
+            },
+          }))
+        }
+      />
+      <BrightnessDialog
+        open={brightnessOpen}
+        onOpenChange={setBrightnessOpen}
+        thumbnailUrl={previewImages[0]?.thumbnail_url ?? null}
+        baseStyle={augmentationPreviewBase}
+        initialPercent={(augmentations.brightness?.params?.max_percent as number) ?? 15}
+        initialBrighten={(augmentations.brightness?.params?.brighten as boolean) ?? true}
+        initialDarken={(augmentations.brightness?.params?.darken as boolean) ?? true}
+        onApply={({ percent, brighten, darken }) =>
+          setAugmentations((prev) => ({
+            ...prev,
+            brightness: {
+              id: "brightness",
+              label: `Brightness (±${percent}%)`,
+              style: { filter: `brightness(${1 + percent / 100})` },
+              params: { max_percent: percent, brighten, darken },
+            },
+          }))
+        }
+      />
+      <Rotate90Dialog
+        open={rotate90Open}
+        onOpenChange={setRotate90Open}
+        thumbnailUrl={previewImages[0]?.thumbnail_url ?? null}
+        baseStyle={augmentationPreviewBase}
+        initialClockwise={(augmentations.rotate90?.params?.clockwise as boolean) ?? true}
+        initialCounterclockwise={(augmentations.rotate90?.params?.counterclockwise as boolean) ?? true}
+        initialUpsideDown={(augmentations.rotate90?.params?.upside_down as boolean) ?? true}
+        onApply={({ clockwise, counterclockwise, upsideDown }) => {
+          const parts = [
+            clockwise && "CW",
+            counterclockwise && "CCW",
+            upsideDown && "180°",
+          ].filter(Boolean)
+          setAugmentations((prev) => ({
+            ...prev,
+            rotate90: {
+              id: "rotate90",
+              label: `90° Rotate (${parts.join(", ")})`,
+              style: { transform: "rotate(90deg) scale(0.7)" },
+              params: { clockwise, counterclockwise, upside_down: upsideDown },
+            },
+          }))
+        }}
+      />
+      <ShearDialog
+        open={shearOpen}
+        onOpenChange={setShearOpen}
+        thumbnailUrl={previewImages[0]?.thumbnail_url ?? null}
+        baseStyle={augmentationPreviewBase}
+        initialHorizontal={(augmentations.shear?.params?.horizontal_max as number) ?? 10}
+        initialVertical={(augmentations.shear?.params?.vertical_max as number) ?? 10}
+        onApply={({ horizontal, vertical }) =>
+          setAugmentations((prev) => ({
+            ...prev,
+            shear: {
+              id: "shear",
+              label: `Shear (±${horizontal}° H, ±${vertical}° V)`,
+              style: { transform: `skew(${horizontal}deg, ${vertical}deg) scale(1.1)` },
+              params: { horizontal_max: horizontal, vertical_max: vertical },
+            },
+          }))
+        }
+      />
+      <CropDialog
+        open={cropOpen}
+        onOpenChange={setCropOpen}
+        thumbnailUrl={previewImages[0]?.thumbnail_url ?? null}
+        baseStyle={augmentationPreviewBase}
+        initialMinPercent={(augmentations.crop?.params?.min_percent as number) ?? 0}
+        initialMaxPercent={(augmentations.crop?.params?.max_percent as number) ?? 20}
+        onApply={({ minPercent, maxPercent }) =>
+          setAugmentations((prev) => ({
+            ...prev,
+            crop: {
+              id: "crop",
+              label: `Crop (${minPercent}%–${maxPercent}%)`,
+              style: { transform: `scale(${1 + maxPercent / 100})` },
+              params: { min_percent: minPercent, max_percent: maxPercent },
+            },
+          }))
+        }
+      />
+      <SliderAugmentationDialog
+        open={noiseOpen}
+        onOpenChange={setNoiseOpen}
+        thumbnailUrl={previewImages[0]?.thumbnail_url ?? null}
+        baseStyle={augmentationPreviewBase}
+        title="Noise"
+        description="Add random noise to help your model be more resilient to camera artifacts."
+        infoTitle="When should I use Random Noise?"
+        infoBody="If your training data was captured in a controlled environment while your deployment environment is less controlled."
+        min={0}
+        max={10}
+        unit="%"
+        initialValue={(augmentations.noise?.params?.max_percent as number) ?? 5}
+        symmetric={false}
+        warningThreshold={5}
+        previewStyle={(magnitude) => ({
+          filter: `contrast(${1 + magnitude * 0.04}) saturate(${1 - magnitude * 0.04})`,
+        })}
+        onApply={(value) =>
+          setAugmentations((prev) => ({
+            ...prev,
+            noise: {
+              id: "noise",
+              label: `Noise (up to ${value}%)`,
+              style: { filter: "contrast(1.4) saturate(0.6)" },
+              params: { max_percent: value },
+            },
+          }))
+        }
+      />
+      <GrayscaleAugDialog
+        open={grayscaleAugOpen}
+        onOpenChange={setGrayscaleAugOpen}
+        thumbnailUrl={previewImages[0]?.thumbnail_url ?? null}
+        baseStyle={augmentationPreviewBase}
+        initialPercent={(augmentations.grayscale?.params?.percent as number) ?? 100}
+        onApply={(percent) =>
+          setAugmentations((prev) => ({
+            ...prev,
+            grayscale: {
+              id: "grayscale",
+              label: `Grayscale (${percent}% of images)`,
+              style: { filter: "grayscale(1)" },
+              params: { percent },
+            },
+          }))
+        }
       />
 
       {workspaceId && projectId && (

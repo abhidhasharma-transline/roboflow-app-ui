@@ -35,6 +35,8 @@ import { discardBatch } from "@/lib/uploadApi"
 import { extractErrorMessage } from "@/lib/utils"
 import { useWorkspaceStore } from "@/stores/workspaceStore"
 import { useToastStore } from "@/stores/toastStore"
+import { useProject } from "@/hooks/useProjects"
+import { PageLoader } from "@/components/shared/PageLoader"
 import type { BatchSummary, JobSummary } from "@/types/job"
 
 function ColumnHelp({ text }: { text: string }) {
@@ -256,6 +258,7 @@ function BatchCard({
   }
 
   const addToast = useToastStore((s) => s.addToast)
+  const removeToast = useToastStore((s) => s.removeToast)
 
   async function handleDelete() {
     setDeleting(true)
@@ -273,9 +276,13 @@ function BatchCard({
 
   async function handleDownload() {
     setDownloading(true)
+    const loadingId = addToast({ variant: "loading", title: "Preparing download…", description: batch.name })
     try {
       await downloadBatchImages(workspaceId, projectId, batch.id, batch.name)
+      removeToast(loadingId)
+      addToast({ variant: "success", title: "Download ready", description: batch.name })
     } catch (err) {
+      removeToast(loadingId)
       addToast({ variant: "error", title: "Couldn't download batch", description: extractErrorMessage(err) })
     } finally {
       setDownloading(false)
@@ -405,11 +412,15 @@ function ActiveJobCard({
   projectId,
   workspaceId,
   onChanged,
+  canManageImages,
+  canAnnotate,
 }: {
   job: JobSummary
   projectId: string
   workspaceId: string
   onChanged: () => void
+  canManageImages: boolean
+  canAnnotate: boolean
 }) {
   const percent = job.total_images === 0 ? 0 : Math.round((job.annotated_count / job.total_images) * 100)
 
@@ -519,11 +530,15 @@ function ActiveJobCard({
             >
               Rename Job
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setTagOpen(true)}>Tag Images</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setMoveOpen(true)}>Move to unassigned</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setDeleteAnnOpen(true)} variant="destructive">
-              Delete all annotations
-            </DropdownMenuItem>
+            {canManageImages && <DropdownMenuItem onClick={() => setTagOpen(true)}>Tag Images</DropdownMenuItem>}
+            {canAnnotate && (
+              <DropdownMenuItem onClick={() => setMoveOpen(true)}>Move to unassigned</DropdownMenuItem>
+            )}
+            {canManageImages && (
+              <DropdownMenuItem onClick={() => setDeleteAnnOpen(true)} variant="destructive">
+                Delete all annotations
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -585,7 +600,7 @@ function ActiveJobCard({
           to={`/projects/${projectId}/annotate/job/${job.id}`}
           className="text-sm font-medium text-brand hover:underline"
         >
-          Start Annotating →
+          {canAnnotate ? "Start Annotating →" : "Review Images →"}
         </Link>
       </div>
 
@@ -673,11 +688,15 @@ function DatasetJobCard({
   projectId,
   workspaceId,
   onChanged,
+  canManageImages,
+  canAnnotate,
 }: {
   job: JobSummary
   projectId: string
   workspaceId: string
   onChanged: () => void
+  canManageImages: boolean
+  canAnnotate: boolean
 }) {
   const labelerText =
     job.assignments.length === 0
@@ -755,8 +774,10 @@ function DatasetJobCard({
             >
               Rename Job
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setTagOpen(true)}>Tag Images</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setMoveOpen(true)}>Move to unassigned</DropdownMenuItem>
+            {canManageImages && <DropdownMenuItem onClick={() => setTagOpen(true)}>Tag Images</DropdownMenuItem>}
+            {canAnnotate && (
+              <DropdownMenuItem onClick={() => setMoveOpen(true)}>Move to unassigned</DropdownMenuItem>
+            )}
             <DropdownMenuItem disabled title="Coming soon — no export pipeline yet">
               <Download className="size-3.5" />
               Download
@@ -847,6 +868,13 @@ export function AnnotatePage() {
   const { projectId } = useParams()
   const workspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   const addToast = useToastStore((s) => s.addToast)
+  const { project } = useProject(projectId)
+  // A Reviewer can't assign work or manage images (upload/tag/delete) — see
+  // ProjectSidebar.tsx for the same flags. Unassigned batches have nothing
+  // a Reviewer can act on (nothing annotated yet to review, can't assign
+  // either), so that whole column is hidden rather than shown empty-handed.
+  const canAnnotate = project?.my_permissions?.annotate !== false
+  const canManageImages = project?.my_permissions?.label_images !== false
   const [unassignedBatches, setUnassignedBatches] = useState<BatchSummary[]>([])
   const [activeJobs, setActiveJobs] = useState<JobSummary[]>([])
   const [datasetJobs, setDatasetJobs] = useState<JobSummary[]>([])
@@ -903,10 +931,13 @@ export function AnnotatePage() {
       </div>
 
       {loading ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <PageLoader />
       ) : (
-        <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-          {/* Unassigned — real batches */}
+        <div className={`grid grid-cols-1 gap-5 ${canAnnotate ? "lg:grid-cols-3" : "lg:grid-cols-2"}`}>
+          {/* Unassigned — real batches. Nothing here is actionable for a
+              Reviewer (can't annotate yet, can't assign), so it's hidden
+              rather than shown as a dead-end empty column. */}
+          {canAnnotate && (
           <div className="flex flex-col rounded-xl border border-border">
             <div className="border-b border-border p-4 text-center">
               <h2 className="flex items-center justify-center gap-1.5 text-base font-semibold text-foreground">
@@ -942,6 +973,7 @@ export function AnnotatePage() {
               )}
             </div>
           </div>
+          )}
 
           {/* Annotating — real active jobs */}
           <div className="flex flex-col rounded-xl border border-border">
@@ -963,7 +995,15 @@ export function AnnotatePage() {
                 </div>
               ) : (
                 activeJobs.map((job) => (
-                  <ActiveJobCard key={job.id} job={job} projectId={projectId!} workspaceId={workspaceId!} onChanged={refetch} />
+                  <ActiveJobCard
+                    key={job.id}
+                    job={job}
+                    projectId={projectId!}
+                    workspaceId={workspaceId!}
+                    onChanged={refetch}
+                    canManageImages={canManageImages}
+                    canAnnotate={canAnnotate}
+                  />
                 ))
               )}
             </div>
@@ -989,7 +1029,15 @@ export function AnnotatePage() {
                 </div>
               ) : (
                 datasetJobs.map((job) => (
-                  <DatasetJobCard key={job.id} job={job} projectId={projectId!} workspaceId={workspaceId!} onChanged={refetch} />
+                  <DatasetJobCard
+                    key={job.id}
+                    job={job}
+                    projectId={projectId!}
+                    workspaceId={workspaceId!}
+                    onChanged={refetch}
+                    canManageImages={canManageImages}
+                    canAnnotate={canAnnotate}
+                  />
                 ))
               )}
             </div>

@@ -13,12 +13,24 @@ export type ResizeMode =
   | "fit_black_edges"
   | "fit_white_edges"
 
+export type AutoContrastType = "contrast_stretching" | "histogram_equalization" | "adaptive_equalization"
+
 export interface PreprocessingConfig {
   auto_orient: boolean
   resize: { mode: ResizeMode; width: number; height: number } | null
   grayscale?: boolean
   auto_contrast?: boolean
+  /** Only meaningful when auto_contrast is true. Absent on versions created
+   *  before this existed — those keep behaving exactly as they did, since
+   *  the backend defaults a missing type to "contrast_stretching" (the only
+   *  algorithm that existed at the time). */
+  auto_contrast_type?: AutoContrastType
   random_sample?: boolean
+  /** Only meaningful when random_sample is true — per-split percentage
+   *  (0-100) of that split's images to actually include in the version.
+   *  Absent (and random_sample true) means "include everything", same as
+   *  before this existed. */
+  random_sample_splits?: { train: number; valid: number; test: number }
 }
 
 export interface ProjectVersion {

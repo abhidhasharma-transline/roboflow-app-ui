@@ -116,6 +116,10 @@ export function ClassesTagsPage() {
   const addToast = useToastStore((s) => s.addToast)
 
   const { project, refetch: refetchProject } = useProject(projectId)
+  // A Reviewer can view tags/classes but not create tags — same flag
+  // ProjectSidebar.tsx/AnnotatePage.tsx key off. Class creation is
+  // untouched (not something she asked to restrict).
+  const canManageImages = project?.my_permissions?.label_images !== false
 
   const [tab, setTab] = useState<"classes" | "tags">("classes")
   const [classes, setClasses] = useState<ProjectClass[]>([])
@@ -281,10 +285,12 @@ export function ClassesTagsPage() {
             className="h-9 pl-8"
           />
         </div>
-        <Button variant="outline" onClick={() => setAddOpen(true)}>
-          <Plus className="size-4" />
-          Add
-        </Button>
+        {(tab === "classes" || canManageImages) && (
+          <Button variant="outline" onClick={() => setAddOpen(true)}>
+            <Plus className="size-4" />
+            Add
+          </Button>
+        )}
         {tab === "classes" && (
           <label className="ml-2 flex items-center gap-2 text-sm text-foreground">
             <Checkbox

@@ -48,6 +48,12 @@ export interface JobDetail {
   total_images: number
   annotated_count: number
   unannotated_count: number
+  /** approved_count is 0 until a reviewer actually approves something.
+   *  pending_review_count is just annotated_count - approved_count, so on a
+   *  job with no reviewers it equals annotated_count (never advances past
+   *  pending) — only read either field once job.reviewers is non-empty. */
+  approved_count: number
+  pending_review_count: number
   assignments: JobAssignmentDetail[]
 }
 

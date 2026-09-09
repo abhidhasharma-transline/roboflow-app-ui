@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { PageLoader } from "@/components/shared/PageLoader"
 import { useToastStore } from "@/stores/toastStore"
 import {
   getVersionImages,
@@ -20,9 +21,11 @@ import {
   type VersionImageSummary,
 } from "@/lib/versionApi"
 import { objectCoverViewBox } from "@/lib/thumbnailGeometry"
+import { preprocessingPreviewStyle } from "@/lib/versionPreview"
 import type { ProjectAnnotationType } from "@/types/project"
 import { DownloadVersionDialog } from "./DownloadVersionDialog"
 import { DeleteVersionDialog } from "./DeleteVersionDialog"
+import { AUTO_CONTRAST_TYPE_LABELS } from "./PreprocessingDialogs"
 
 function annotationTypeLabel(type: ProjectAnnotationType) {
   return type.split("_").map((w) => w[0].toUpperCase() + w.slice(1)).join(" ")
@@ -158,10 +161,21 @@ export function VersionDetailView({
       `Resize: ${version.preprocessing.resize.width}×${version.preprocessing.resize.height}`
     )
   if (version.preprocessing?.grayscale) preprocessingEntries.push("Grayscale: Applied")
-  if (version.preprocessing?.auto_contrast) preprocessingEntries.push("Auto-Adjust Contrast: Applied")
-  if (version.preprocessing?.random_sample) preprocessingEntries.push("Random Sample: Applied")
+  if (version.preprocessing?.auto_contrast)
+    preprocessingEntries.push(
+      `Auto-Adjust Contrast: ${AUTO_CONTRAST_TYPE_LABELS[version.preprocessing.auto_contrast_type ?? "contrast_stretching"]}`
+    )
+  if (version.preprocessing?.random_sample) {
+    const splits = version.preprocessing.random_sample_splits
+    preprocessingEntries.push(
+      splits
+        ? `Random Sample: Train ${splits.train}% · Valid ${splits.valid}% · Test ${splits.test}%`
+        : "Random Sample: Applied"
+    )
+  }
 
   const augmentationLabels = Object.values(version.augmentations ?? {}).map((a) => a.label)
+  const previewStyle = preprocessingPreviewStyle(version.preprocessing)
 
   return (
     <div className="flex-1 overflow-y-auto p-8">
@@ -228,12 +242,19 @@ export function VersionDetailView({
       </div>
 
       {loadingImages ? (
-        <p className="mb-8 text-sm text-muted-foreground">Loading…</p>
+        <PageLoader />
       ) : (
         <div className="mb-8 grid grid-cols-4 gap-3 sm:grid-cols-6 lg:grid-cols-8">
           {images.slice(0, 8).map((img) => (
             <div key={img.id} className="relative aspect-square overflow-hidden rounded-md bg-muted">
-              {img.thumbnail_url && <img src={img.thumbnail_url} alt={img.filename} className="size-full object-cover" />}
+              {img.thumbnail_url && (
+                <img
+                  src={img.thumbnail_url}
+                  alt={img.filename}
+                  className="size-full object-cover"
+                  style={previewStyle}
+                />
+              )}
               <ThumbAnnotations img={img} containerAspect={1} />
             </div>
           ))}

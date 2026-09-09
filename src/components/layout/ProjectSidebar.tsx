@@ -10,10 +10,6 @@ import {
   Layers,
   HeartPulse,
   Tags,
-  Share2,
-  Grid3x3,
-  Wand2,
-  ListChecks,
   MoreVertical,
   Copy,
   Pencil,
@@ -60,7 +56,6 @@ export function ProjectSidebar() {
   const { project, refetch } = useProject(projectId)
   const { name: workspaceName } = useActiveWorkspace()
   const [dataOpen, setDataOpen] = useState(true)
-  const [modelsOpen, setModelsOpen] = useState(true)
   const [datasetCount, setDatasetCount] = useState<number | undefined>(undefined)
 
   // The sidebar stays mounted across every page in a project, so this can't
@@ -118,20 +113,21 @@ export function ProjectSidebar() {
     }
   }
 
-  // A Reviewer's job is reviewing, not assigning/managing annotation work —
-  // every action on the Annotate board (upload-into-batch aside) is exactly
-  // that, so it's hidden rather than left reachable-but-403ing on every
-  // click. Defaults to visible while my_permissions hasn't loaded yet (or
-  // for a role that isn't scoped at all here, e.g. workspace-level admins
+  // A Reviewer can't assign/manage/upload/tag work, but still needs a way
+  // in to review it — so the Annotate board itself stays reachable for
+  // them (relabeled "Review" below), just without the management actions.
+  // Defaults to visible while my_permissions hasn't loaded yet (or for a
+  // role that isn't scoped at all here, e.g. workspace-level admins
   // browsing before project access resolves) — only an explicit `false`
-  // hides it.
+  // narrows either flag.
   const canAnnotate = project?.my_permissions?.annotate !== false
+  const canManageImages = project?.my_permissions?.label_images !== false
 
   const dataItems: SubNavItem[] = [
-    { label: "Upload Data", icon: Upload, path: `/projects/${projectId}/upload` },
-    ...(canAnnotate
-      ? [{ label: "Annotate", icon: ImageIcon, path: `/projects/${projectId}/annotate` }]
+    ...(canManageImages
+      ? [{ label: "Upload Data", icon: Upload, path: `/projects/${projectId}/upload` }]
       : []),
+    { label: canAnnotate ? "Annotate" : "Review", icon: ImageIcon, path: `/projects/${projectId}/annotate` },
     {
       label: "Dataset",
       icon: Database,
@@ -142,13 +138,6 @@ export function ProjectSidebar() {
     { label: "Analytics", icon: HeartPulse, disabled: true },
     { label: "Classes & Tags", icon: Tags, path: `/projects/${projectId}/classes` },
     { label: "Team", icon: Users, path: `/projects/${projectId}/team` },
-  ]
-
-  const modelItems: SubNavItem[] = [
-    { label: "Train", icon: Share2, path: `/projects/${projectId}/train` },
-    { label: "Models", icon: Grid3x3, disabled: true },
-    { label: "NAS", icon: Wand2, disabled: true },
-    { label: "Test", icon: ListChecks, disabled: true },
   ]
 
   return (
@@ -233,28 +222,6 @@ export function ProjectSidebar() {
         )}
       </div>
 
-      {/* MODELS section */}
-      <div className="px-3 py-1">
-        <button
-          onClick={() => setModelsOpen((v) => !v)}
-          className="flex w-full items-center justify-between px-0.5 py-1.5 text-[11px] font-semibold tracking-wide text-sidebar-muted uppercase"
-        >
-          Models
-          <ChevronDown
-            className={cn(
-              "size-3.5 transition-transform",
-              !modelsOpen && "-rotate-90"
-            )}
-          />
-        </button>
-        {modelsOpen && (
-          <nav className="flex flex-col gap-0.5 pt-0.5">
-            {modelItems.map((item) => (
-              <SubNavLink key={item.label} item={item} />
-            ))}
-          </nav>
-        )}
-      </div>
     </aside>
 
     <Dialog open={renameOpen} onOpenChange={renameSaving ? undefined : setRenameOpen}>

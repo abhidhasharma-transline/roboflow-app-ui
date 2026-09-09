@@ -11,6 +11,11 @@ export interface AugmentationType {
   id: string
   label: string
   style: React.CSSProperties
+  /** Only present for the types that have their own configuration dialog
+   *  (Flip, Hue, Rotation, Saturation, Exposure, Brightness, Blur) — the
+   *  actual chosen slider value / checkboxes, read by the backend
+   *  (app/versions/augment.py) instead of its old fixed-range default. */
+  params?: Record<string, number | boolean>
 }
 
 export const IMAGE_LEVEL_AUGMENTATIONS: AugmentationType[] = [
@@ -71,7 +76,7 @@ export function AugmentationOptionsDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-2xl sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Augmentation Options</DialogTitle>
         </DialogHeader>
@@ -79,6 +84,13 @@ export function AugmentationOptionsDialog({
           Augmentations create new training examples for your model to learn from.
         </p>
 
+        {/* Deliberately just each type's own effect, NOT composed with
+         *  whatever preprocessing was chosen earlier — this is a picker for
+         *  "what kind of augmentation is this", so a recognizable, isolated
+         *  preview reads clearer here than a combined one would. The actual
+         *  configuration dialog each of these opens into (Flip, Hue,
+         *  Rotation, Saturation, Exposure, Brightness, Blur) DOES compose
+         *  the two, since that view is about the real combined result. */}
         <div className="grid grid-cols-5 gap-2">
           {IMAGE_LEVEL_AUGMENTATIONS.map((aug) => (
             <Tile

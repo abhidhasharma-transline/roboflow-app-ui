@@ -4,6 +4,7 @@ import { Crown, ShieldCheck, UserX } from "lucide-react"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { PageLoader } from "@/components/shared/PageLoader"
 import { Switch } from "@/components/ui/switch"
 import {
   Dialog,
@@ -22,10 +23,11 @@ import {
 } from "@/components/ui/select"
 import { SectionHeading } from "@/components/shared/SectionHeading"
 import { initials, fullName, roleLabel } from "@/lib/userDisplay"
-import { effectivePermissions, PERMISSION_KEYS, PERMISSION_LABELS } from "@/lib/permissions"
+import { effectivePermissions, diffFromRoleDefaults, PERMISSION_KEYS, PERMISSION_LABELS } from "@/lib/permissions"
 import {
   listProjectMembers,
   updateProjectMember,
+  addProjectMember,
   removeProjectMember,
   transferProjectOwner,
 } from "@/lib/projectApi"
@@ -75,11 +77,21 @@ export function ProjectTeamPage() {
   async function togglePermission(member: ProjectMember, key: string, value: boolean) {
     if (!workspaceId || !projectId) return
     const effective = effectivePermissions(member.role as WorkspaceRole, member.permission_overrides)
+    const permissions = diffFromRoleDefaults(member.role as WorkspaceRole, { ...effective, [key]: value })
     try {
-      await updateProjectMember(workspaceId, projectId, member.user_id, {
-        permissions: { ...effective, [key]: value },
-      })
+      // A member with only workspace-wide full project access is listed
+      // here (see list_project_members's fallback) but has no real
+      // ProjectAccess row yet — PATCHing one that doesn't exist 404s
+      // ("Member not found on this project"). The first toggle for them
+      // needs to create that row instead, exactly like adding an explicit
+      // per-project override does.
+      if (member.has_explicit_access) {
+        await updateProjectMember(workspaceId, projectId, member.user_id, { permissions })
+      } else {
+        await addProjectMember(workspaceId, projectId, member.user_id, member.role, permissions)
+      }
       refetch()
+      addToast({ variant: "success", title: "Permission saved" })
     } catch (err) {
       addToast({ variant: "error", title: "Couldn't update permission", description: extractErrorMessage(err) })
     }
@@ -124,7 +136,7 @@ export function ProjectTeamPage() {
       </div>
 
       {isLoading ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <PageLoader />
       ) : members.length === 0 ? (
         <p className="text-sm text-muted-foreground">No members on this project yet.</p>
       ) : (

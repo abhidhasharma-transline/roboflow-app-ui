@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
-import { useParams, Link } from "react-router-dom"
-import { ArrowLeft, UserPlus, X, Pencil, Boxes } from "lucide-react"
+import { useParams, Link, useNavigate } from "react-router-dom"
+import { ArrowLeft, UserPlus, X, Pencil, UserX, Trash2, Boxes } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
@@ -9,17 +9,30 @@ import {
   listWorkspaceMembers,
   listWorkspaceInvitations,
   cancelInvitation,
+  removeWorkspaceMember,
+  deleteWorkspace,
 } from "@/lib/workspaceApi"
 import { InviteMemberDialog } from "@/features/workspace/InviteMemberDialog"
 import { EditMemberDialog } from "@/features/workspace/EditMemberDialog"
 import { useProjects } from "@/hooks/useProjects"
 import { useAuthStore } from "@/stores/authStore"
+import { useToastStore } from "@/stores/toastStore"
 import { initials, roleLabel } from "@/lib/userDisplay"
 import { grantedPermissions, PERMISSION_LABELS } from "@/lib/permissions"
 import type { Workspace, WorkspaceMember, WorkspaceInvitation } from "@/types/workspace"
 
+function extractErrorMessage(err: unknown): string {
+  if (typeof err === "object" && err !== null && "response" in err) {
+    const resp = (err as { response?: { data?: { detail?: unknown } } }).response
+    const detail = resp?.data?.detail
+    if (typeof detail === "string") return detail
+  }
+  return "Something went wrong — please try again."
+}
+
 export function WorkspaceMembersPage() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
+  const navigate = useNavigate()
   const currentUser = useAuthStore((s) => s.user)
   const [workspace, setWorkspace] = useState<Workspace | null>(null)
   const [members, setMembers] = useState<WorkspaceMember[]>([])
@@ -27,6 +40,7 @@ export function WorkspaceMembersPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingMember, setEditingMember] = useState<WorkspaceMember | null>(null)
+  const addToast = useToastStore((s) => s.addToast)
 
   const { projects } = useProjects(workspaceId ?? null)
 
@@ -50,6 +64,38 @@ export function WorkspaceMembersPage() {
   }
 
   useEffect(refetch, [workspaceId])
+
+  async function handleRemoveMember(member: WorkspaceMember) {
+    if (!workspaceId) return
+    if (!window.confirm(`Remove ${member.username} from this workspace? They'll lose access to every project in it.`)) {
+      return
+    }
+    try {
+      await removeWorkspaceMember(workspaceId, member.user_id)
+      addToast({ variant: "success", title: "Member removed" })
+      refetch()
+    } catch (err) {
+      addToast({ variant: "error", title: "Couldn't remove member", description: extractErrorMessage(err) })
+    }
+  }
+
+  async function handleDeleteWorkspace() {
+    if (!workspaceId || !workspace) return
+    if (
+      !window.confirm(
+        `Delete "${workspace.name}"? Every project in it becomes inaccessible. This can't be undone from the UI.`
+      )
+    ) {
+      return
+    }
+    try {
+      await deleteWorkspace(workspaceId)
+      addToast({ variant: "success", title: "Workspace deleted" })
+      navigate("/settings/workspaces")
+    } catch (err) {
+      addToast({ variant: "error", title: "Couldn't delete workspace", description: extractErrorMessage(err) })
+    }
+  }
 
   async function handleCancelInvite(invitationId: string) {
     if (!workspaceId) return
@@ -194,19 +240,46 @@ export function WorkspaceMembersPage() {
                           their own access isn't governed by this row (owner authority /
                           super_admin bypass), and editing it risks a confusing self-lockout. */}
                       {canManage && m.user_id !== currentUser?.id && (
-                        <button
-                          onClick={() => setEditingMember(m)}
-                          className="text-muted-foreground hover:text-foreground"
-                          aria-label={`Edit ${m.username}`}
-                        >
-                          <Pencil className="size-4" />
-                        </button>
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => setEditingMember(m)}
+                            className="text-muted-foreground hover:text-foreground"
+                            aria-label={`Edit ${m.username}`}
+                          >
+                            <Pencil className="size-4" />
+                          </button>
+                          {workspace?.owner_id !== m.user_id && (
+                            <button
+                              onClick={() => handleRemoveMember(m)}
+                              className="text-muted-foreground hover:text-destructive"
+                              aria-label={`Remove ${m.username} from workspace`}
+                              title="Remove from workspace"
+                            >
+                              <UserX className="size-4" />
+                            </button>
+                          )}
+                        </div>
                       )}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {canManage && (
+          <div className="mt-8 flex items-center justify-between gap-4 rounded-lg border border-destructive/30 p-5">
+            <div>
+              <h2 className="mb-1 text-base font-semibold text-foreground">Delete Workspace</h2>
+              <p className="text-sm text-muted-foreground">
+                Removes this workspace and everyone's access to every project in it.
+              </p>
+            </div>
+            <Button variant="destructive" onClick={handleDeleteWorkspace} className="shrink-0">
+              <Trash2 className="size-4" />
+              Delete Workspace
+            </Button>
           </div>
         )}
       </div>

@@ -55,8 +55,8 @@ export interface BatchPreviewImage {
   id: string
   filename: string
   thumbnail_url: string | null
+  image_url: string | null
   status: string
-  is_duplicate: boolean
   width: number
   height: number
   tags: { id: string; name: string }[]

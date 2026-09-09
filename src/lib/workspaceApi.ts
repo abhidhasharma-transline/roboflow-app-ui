@@ -22,6 +22,13 @@ export async function createWorkspace(name: string): Promise<Workspace> {
   return res.data
 }
 
+/** Super admin or the workspace owner only. Soft-delete — rejected for the
+ *  auto-created personal workspace every account gets at registration. */
+export async function deleteWorkspace(workspaceId: string): Promise<{ message: string }> {
+  const res = await api.delete<{ message: string }>(`/workspaces/${workspaceId}`)
+  return res.data
+}
+
 export async function getWorkspace(workspaceId: string): Promise<Workspace> {
   const res = await api.get<Workspace>(`/workspaces/${workspaceId}`)
   return res.data
@@ -43,6 +50,18 @@ export async function updateWorkspaceMember(
   const res = await api.patch<WorkspaceMember>(
     `/workspaces/${workspaceId}/members/${userId}`,
     payload
+  )
+  return res.data
+}
+
+/** Super admin or the workspace owner only. Also revokes any per-project
+ *  access they held in this workspace's projects. */
+export async function removeWorkspaceMember(
+  workspaceId: string,
+  userId: string
+): Promise<{ message: string }> {
+  const res = await api.delete<{ message: string }>(
+    `/workspaces/${workspaceId}/members/${userId}`
   )
   return res.data
 }

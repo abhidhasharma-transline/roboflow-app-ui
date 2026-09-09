@@ -8,7 +8,6 @@ import { WorkspacePage } from "@/features/workspace/WorkspacePage"
 import { ProjectsPage } from "@/features/projects/ProjectsPage"
 import { FolderProjectsPage } from "@/features/projects/FolderProjectsPage"
 import { UploadPage } from "@/features/upload/UploadPage"
-import { TrainPage } from "@/features/train/TrainPage"
 import { AnnotatePage } from "@/features/annotate/AnnotatePage"
 import { BatchAssignPage } from "@/features/annotate/BatchAssignPage"
 import { JobPage } from "@/features/annotate/JobPage"
@@ -26,6 +25,7 @@ import { WorkspaceMembersPage } from "@/features/settings/WorkspaceMembersPage"
 import { InvitationAcceptPage } from "@/features/workspace/InvitationAcceptPage"
 import { NotificationsPage } from "@/features/notifications/NotificationsPage"
 import { ToastContainer } from "@/components/shared/ToastContainer"
+import { PageLoader } from "@/components/shared/PageLoader"
 import { useAuthStore } from "@/stores/authStore"
 import { useDefaultWorkspace } from "@/hooks/useDefaultWorkspace"
 
@@ -40,8 +40,8 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 
   if (isHydrating) {
     return (
-      <div className="flex h-screen items-center justify-center text-sm text-muted-foreground">
-        Loading…
+      <div className="flex h-screen items-center justify-center">
+        <PageLoader />
       </div>
     )
   }
@@ -83,7 +83,6 @@ function App() {
           <Route path="/workspace" element={<WorkspacePage />} />
           <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/projects/folders/:folderId" element={<FolderProjectsPage />} />
-          <Route path="/projects/:projectId/train" element={<TrainPage />} />
           <Route path="/projects/:projectId/upload" element={<UploadPage />} />
           <Route path="/projects/:projectId/annotate" element={<AnnotatePage />} />
           <Route

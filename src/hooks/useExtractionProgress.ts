@@ -31,8 +31,19 @@ export function useExtractionProgress(
         const data = await fetchExtractionStatus(workspaceId, projectId, videoUploadId)
         setProgress(data)
         if (data.status === "done" || data.status === "failed") stopPolling()
-      } catch {
-        // Keep polling — a transient network blip shouldn't stop the fallback.
+      } catch (err) {
+        // A 404 ("Video upload not found") is never transient — that row is
+        // gone (discarded, or this ID was stale to begin with) and will
+        // never start existing again, so retrying it every 2s forever was
+        // pure noise that also left the UI looking permanently stuck rather
+        // than surfacing a real error. Anything else (network blip, 5xx)
+        // is worth retrying, since the fallback's whole point is riding out
+        // exactly that kind of transient failure.
+        const status = (err as { response?: { status?: number } })?.response?.status
+        if (status === 404) {
+          stopPolling()
+          setProgress({ status: "failed", percent: 0, message: "Lost track of this upload — please try again." })
+        }
       }
     }, POLL_INTERVAL_MS)
   }, [workspaceId, projectId, videoUploadId, stopPolling])

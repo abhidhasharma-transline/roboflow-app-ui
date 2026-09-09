@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react"
 import { useParams, Link } from "react-router-dom"
 import { ArrowLeft, Plus, Search, ArrowUpDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { PageLoader } from "@/components/shared/PageLoader"
 import { Input } from "@/components/ui/input"
 import {
   Select,
@@ -106,7 +107,7 @@ export function FolderProjectsPage() {
       </div>
 
       {isLoading ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <PageLoader />
       ) : projects.length === 0 ? (
         <div className="flex flex-col items-center justify-center gap-4 py-20 text-center">
           <p className="text-lg font-semibold text-foreground">

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react"
 import { Plus, Search, FolderPlus, UserPlus, ArrowUpDown } from "lucide-react"
 import { Link } from "react-router-dom"
 import { Button } from "@/components/ui/button"
+import { PageLoader } from "@/components/shared/PageLoader"
 import { Input } from "@/components/ui/input"
 import {
   Select,
@@ -148,7 +149,7 @@ export function ProjectsPage() {
       </div>
 
       {isLoading ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <PageLoader />
       ) : (
         <>
           {folders.length > 0 && (

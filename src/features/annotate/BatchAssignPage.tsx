@@ -17,6 +17,8 @@ import {
   UserPlus,
   Trash2,
   Pencil,
+  Maximize2,
+  X,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -130,6 +132,7 @@ export function BatchAssignPage() {
   // at one page would silently create a job with only that page's images
   // instead of everything actually unassigned.
   const [unannotatedTotal, setUnannotatedTotal] = useState(0)
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null)
   const [search, setSearch] = useState("")
   const [filenameFilter, setFilenameFilter] = useState("")
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest")
@@ -567,7 +570,7 @@ export function BatchAssignPage() {
                 : "grid grid-cols-1 gap-3 xl:grid-cols-2"
             }
           >
-            {filteredImages.map((img) => {
+            {filteredImages.map((img, index) => {
               const selected = selectedIds.includes(img.id)
               return viewMode === "grid" ? (
                 <div
@@ -593,6 +596,16 @@ export function BatchAssignPage() {
                         Processing…
                       </div>
                     )}
+                    <button
+                      title="View full size"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setPreviewIndex(index)
+                      }}
+                      className="absolute right-1.5 bottom-1.5 z-10 flex size-6 items-center justify-center rounded-md bg-background/90 text-foreground opacity-0 shadow-sm hover:bg-accent group-hover:opacity-100"
+                    >
+                      <Maximize2 className="size-3.5" />
+                    </button>
                   </div>
                   <p className="truncate text-xs text-muted-foreground" title={img.filename}>
                     {img.filename}
@@ -636,6 +649,16 @@ export function BatchAssignPage() {
                       <span className="font-semibold text-muted-foreground">TAGS:</span> {img.tags.length} Total
                     </p>
                   </div>
+                  <button
+                    title="View full size"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setPreviewIndex(index)
+                    }}
+                    className="shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                  >
+                    <Maximize2 className="size-4" />
+                  </button>
                 </div>
               )
             })}
@@ -791,6 +814,65 @@ export function BatchAssignPage() {
           </>
         )}
       </div>
+
+      <Dialog open={previewIndex !== null} onOpenChange={(v) => !v && setPreviewIndex(null)}>
+        <DialogContent
+          showCloseButton={false}
+          className="max-w-5xl gap-0 border-none bg-transparent p-0 shadow-none"
+        >
+          {previewIndex !== null && filteredImages[previewIndex] && (
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center justify-between text-sm text-white">
+                <p className="truncate font-medium">{filteredImages[previewIndex].filename}</p>
+                <button
+                  onClick={() => setPreviewIndex(null)}
+                  className="flex size-7 items-center justify-center rounded-md hover:bg-white/10"
+                >
+                  <X className="size-4" />
+                </button>
+              </div>
+
+              <div className="relative flex items-center justify-center">
+                {previewIndex > 0 && (
+                  <button
+                    onClick={() => setPreviewIndex((i) => (i !== null ? i - 1 : i))}
+                    className="absolute left-2 z-10 flex size-9 items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70"
+                  >
+                    <ChevronLeft className="size-5" />
+                  </button>
+                )}
+
+                <div className="relative max-h-[80vh] overflow-hidden rounded-lg bg-black">
+                  {filteredImages[previewIndex].image_url ? (
+                    <img
+                      src={filteredImages[previewIndex].image_url ?? undefined}
+                      alt={filteredImages[previewIndex].filename}
+                      className="max-h-[80vh] max-w-full object-contain"
+                    />
+                  ) : (
+                    <div className="flex h-64 w-96 items-center justify-center text-sm text-muted-foreground">
+                      Preview unavailable
+                    </div>
+                  )}
+                </div>
+
+                {previewIndex < filteredImages.length - 1 && (
+                  <button
+                    onClick={() => setPreviewIndex((i) => (i !== null ? i + 1 : i))}
+                    className="absolute right-2 z-10 flex size-9 items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70"
+                  >
+                    <ChevronRight className="size-5" />
+                  </button>
+                )}
+              </div>
+
+              <p className="text-center text-xs text-white/70">
+                {previewIndex + 1} of {filteredImages.length}
+              </p>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={tagDialogOpen}

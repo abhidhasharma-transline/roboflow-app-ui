@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useParams, useNavigate, Link } from "react-router-dom"
-import { X, Pencil, Check, RotateCcw, Activity, ShieldCheck } from "lucide-react"
+import { X, Pencil, Check, RotateCcw, Activity, ShieldCheck, ThumbsUp, ThumbsDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
@@ -15,23 +15,38 @@ import {
 } from "@/components/ui/select"
 import {
   getJob, getJobImages, getJobActivity, updateJobInstructions, updateJobTitle, listJobReviewers,
+  reviewJobImages,
 } from "@/lib/jobApi"
 import { sendImageToUnannotated } from "@/lib/commentApi"
 import { InstructionsEditor } from "@/components/shared/InstructionsEditor"
 import { ScrollToTopButton } from "@/components/shared/ScrollToTopButton"
 import { useWorkspaceStore } from "@/stores/workspaceStore"
 import { useToastStore } from "@/stores/toastStore"
+import { useAuthStore } from "@/stores/authStore"
+import { useProject } from "@/hooks/useProjects"
+import { PageLoader } from "@/components/shared/PageLoader"
+import { extractErrorMessage } from "@/lib/utils"
 import { ReassignJobDialog } from "./ReassignJobDialog"
 import { SubmitForReviewDialog } from "./SubmitForReviewDialog"
 import { AddToDatasetDialog } from "./AddToDatasetDialog"
 import type { JobDetail, JobImageSummary, JobActivityEntry, JobReviewerSummary } from "@/types/job"
 
-type Tab = "unannotated" | "annotated"
+type Tab = "unannotated" | "annotated" | "approved"
 
 export function JobPage() {
   const { projectId, jobId } = useParams<{ projectId: string; jobId: string }>()
   const navigate = useNavigate()
   const workspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
+  const { project } = useProject(projectId)
+  // A Reviewer can approve/reject and edit instructions, but can't assign,
+  // reassign, or start annotating themselves — same flag ProjectSidebar.tsx
+  // and AnnotatePage.tsx already key off.
+  const canAnnotate = project?.my_permissions?.annotate !== false
+  // A Labeler's own image list is already forced server-side to just their
+  // assigned slice, so a labeler-picker would be inert for them — only show
+  // it to whoever can actually see the whole job (Admin/Reviewer/SA).
+  const showLabelerFilter = project?.my_role !== "labeler"
+  const [labelerFilter, setLabelerFilter] = useState<string>("all")
 
   const [job, setJob] = useState<JobDetail | null>(null)
   const [tab, setTab] = useState<Tab>("unannotated")
@@ -58,6 +73,32 @@ export function JobPage() {
   const [reassignOpen, setReassignOpen] = useState(false)
   const [reviewOpen, setReviewOpen] = useState(false)
   const [reviewers, setReviewers] = useState<JobReviewerSummary[]>([])
+  const [reviewing, setReviewing] = useState(false)
+
+  const currentUserId = useAuthStore((s) => s.user?.id)
+  // Review is opt-in per job (via "Submit for Review") — everything below
+  // only changes shape once at least one reviewer is actually attached, so
+  // a job with none behaves exactly as it did before review existed.
+  const hasReviewers = reviewers.length > 0
+  const isReviewerHere = reviewers.some((r) => r.user_id === currentUserId)
+  // A Reviewer has project-wide oversight — they can review ANY job, not
+  // just ones someone specifically "Submit for Review"-ed to them (they
+  // can't even see that button, see canAnnotate above). So the review UI
+  // (To Do/Approved tabs, review filtering, Approve/Reject controls) turns
+  // on either the old way (this job has a formal invite) OR simply because
+  // the viewer's own project role is Reviewer.
+  const isReviewerRole = project?.my_role === "reviewer"
+  const reviewUiActive = hasReviewers || isReviewerRole
+
+  // A Reviewer's own "to do" is the review queue, not the labeler's
+  // unannotated queue — so their default landing tab is the pending-review
+  // set (the "annotated" tab value, relabeled "To Do" for them below), not
+  // "unannotated" like every other role. `isReviewerRole` starts false
+  // until `project` loads, so this fires once as soon as it flips true
+  // rather than being decided at initial useState time.
+  useEffect(() => {
+    if (isReviewerRole) setTab("annotated")
+  }, [isReviewerRole])
 
   function refetchJob() {
     if (!workspaceId || !projectId || !jobId) return
@@ -120,24 +161,69 @@ export function JobPage() {
 
   const JOB_IMAGES_PAGE_SIZE = 60
 
+  // "approved" is a UI-only tab — the API models it as tab=annotated plus a
+  // review filter, not a third tab value of its own (see get_job_images).
+  // "annotated" itself only filters to review=pending once reviewers exist;
+  // with none attached it stays every annotated image, unchanged from
+  // before review existed at all.
+  function apiTabParams(t: Tab): { apiTab: "unannotated" | "annotated"; review?: "pending" | "approved" } {
+    if (t === "unannotated") return { apiTab: "unannotated" }
+    if (t === "approved") return { apiTab: "annotated", review: "approved" }
+    return { apiTab: "annotated", review: reviewUiActive ? "pending" : undefined }
+  }
+
   useEffect(() => {
     if (!workspaceId || !projectId || !jobId) return
     setLoadingImages(true)
     setSelectedImageIds([])
-    getJobImages(workspaceId, projectId, jobId, tab, { skip: 0, limit: JOB_IMAGES_PAGE_SIZE })
+    const { apiTab, review } = apiTabParams(tab)
+    const assignedTo = labelerFilter === "all" ? undefined : labelerFilter
+    getJobImages(workspaceId, projectId, jobId, apiTab, { skip: 0, limit: JOB_IMAGES_PAGE_SIZE }, review, assignedTo)
       .then((res) => {
         setImages(res.images)
         setImagesTotal(res.total)
       })
       .finally(() => setLoadingImages(false))
-  }, [workspaceId, projectId, jobId, tab])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceId, projectId, jobId, tab, reviewUiActive, labelerFilter])
 
   function loadMoreImages() {
     if (!workspaceId || !projectId || !jobId || loadingMoreImages) return
     setLoadingMoreImages(true)
-    getJobImages(workspaceId, projectId, jobId, tab, { skip: images.length, limit: JOB_IMAGES_PAGE_SIZE })
+    const { apiTab, review } = apiTabParams(tab)
+    const assignedTo = labelerFilter === "all" ? undefined : labelerFilter
+    getJobImages(
+      workspaceId, projectId, jobId, apiTab,
+      { skip: images.length, limit: JOB_IMAGES_PAGE_SIZE }, review, assignedTo
+    )
       .then((res) => setImages((prev) => [...prev, ...res.images]))
       .finally(() => setLoadingMoreImages(false))
+  }
+
+  async function handleReviewAction(action: "approve" | "reject") {
+    if (!workspaceId || !projectId || !jobId || selectedImageIds.length === 0 || reviewing) return
+    setReviewing(true)
+    try {
+      await reviewJobImages(workspaceId, projectId, jobId, selectedImageIds, action)
+      addToast({
+        variant: "success",
+        title: action === "approve" ? "Approved" : "Sent back for changes",
+        description: `${selectedImageIds.length} image${selectedImageIds.length !== 1 ? "s" : ""}`,
+      })
+      setImages((prev) => prev.filter((img) => !selectedImageIds.includes(img.id)))
+      setSelectedImageIds([])
+      refetchJob()
+      refetchReviewers()
+      refetchActivity()
+    } catch (err) {
+      addToast({
+        variant: "error",
+        title: `Couldn't ${action === "approve" ? "approve" : "reject"} these images`,
+        description: extractErrorMessage(err),
+      })
+    } finally {
+      setReviewing(false)
+    }
   }
 
   function toggleImageSelect(id: string) {
@@ -191,7 +277,12 @@ export function JobPage() {
   }
 
   function handleImageCardClick(imageId: string) {
-    if (selectedImageIds.length > 0) {
+    // A Reviewer never opens the annotation tool (they can't save changes
+    // there anyway — the backend blocks it) — every click just toggles
+    // selection for them, across all three tabs, so their whole workflow
+    // is "select, then Approve/Reject" rather than accidentally landing in
+    // an editor they can't use.
+    if (selectedImageIds.length > 0 || !canAnnotate) {
       toggleImageSelect(imageId)
       return
     }
@@ -200,7 +291,11 @@ export function JobPage() {
   }
 
   if (!job) {
-    return <div className="flex-1 p-8 text-sm text-muted-foreground">Loading…</div>
+    return (
+      <div className="flex flex-1 overflow-hidden">
+        <PageLoader variant="fill" />
+      </div>
+    )
   }
 
   return (
@@ -248,13 +343,15 @@ export function JobPage() {
         <div className="mb-5">
           <div className="mb-2 flex items-center justify-between">
             <p className="text-sm font-semibold text-foreground">Assignment</p>
-            <button
-              onClick={() => setReassignOpen(true)}
-              className="flex items-center gap-1 text-xs font-medium text-brand hover:underline"
-            >
-              <Pencil className="size-3" />
-              Reassign
-            </button>
+            {canAnnotate && (
+              <button
+                onClick={() => setReassignOpen(true)}
+                className="flex items-center gap-1 text-xs font-medium text-brand hover:underline"
+              >
+                <Pencil className="size-3" />
+                Reassign
+              </button>
+            )}
           </div>
           <div className="flex flex-col gap-2">
             {job.assignments.map((a) => (
@@ -367,34 +464,69 @@ export function JobPage() {
             </div>
           )}
           <div className="flex items-center gap-2">
-            {tab === "unannotated" && (
+            {tab === "unannotated" && canAnnotate && (
               <Button variant="brand" asChild>
                 <Link to={`/projects/${projectId}/annotate/tool/${job.id}`}>Start Annotating</Link>
               </Button>
             )}
             {tab === "annotated" && selectedImageIds.length > 0 && (
+              isReviewerRole || (hasReviewers && isReviewerHere) ? (
+                <>
+                  <Button
+                    variant="outline"
+                    className="border-destructive/40 text-destructive hover:bg-destructive/10"
+                    onClick={() => handleReviewAction("reject")}
+                    disabled={reviewing}
+                  >
+                    <ThumbsDown className="size-4" />
+                    {reviewing ? "Working…" : `Reject ${selectedImageIds.length}`}
+                  </Button>
+                  <Button variant="brand" onClick={() => handleReviewAction("approve")} disabled={reviewing}>
+                    <ThumbsUp className="size-4" />
+                    {reviewing ? "Working…" : `Approve ${selectedImageIds.length}`}
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  variant="outline"
+                  onClick={handleSendSelectedToUnannotated}
+                  disabled={sendingSelectedToUnannotated}
+                >
+                  <RotateCcw className="size-4" />
+                  {sendingSelectedToUnannotated
+                    ? "Sending…"
+                    : `Send ${selectedImageIds.length} Image${selectedImageIds.length !== 1 ? "s" : ""} To Unannotated`}
+                </Button>
+              )
+            )}
+            {tab === "approved" && selectedImageIds.length > 0 && (isReviewerRole || (hasReviewers && isReviewerHere)) && (
               <Button
                 variant="outline"
-                onClick={handleSendSelectedToUnannotated}
-                disabled={sendingSelectedToUnannotated}
+                className="border-destructive/40 text-destructive hover:bg-destructive/10"
+                onClick={() => handleReviewAction("reject")}
+                disabled={reviewing}
               >
-                <RotateCcw className="size-4" />
-                {sendingSelectedToUnannotated
-                  ? "Sending…"
-                  : `Send ${selectedImageIds.length} Image${selectedImageIds.length !== 1 ? "s" : ""} To Unannotated`}
+                <ThumbsDown className="size-4" />
+                {reviewing ? "Working…" : `Reject ${selectedImageIds.length}`}
               </Button>
             )}
-            <Button variant="outline" onClick={() => setReviewOpen(true)}>
-              Submit for Review
-            </Button>
-            <Button
-              variant="brand"
-              onClick={() => setAddToDatasetOpen(true)}
-              disabled={!job.annotated_count}
-            >
-              <Check className="size-4" />
-              {`Add ${job.annotated_count} Image${job.annotated_count !== 1 ? "s" : ""} To Dataset`}
-            </Button>
+            {canAnnotate && (
+              <Button variant="outline" onClick={() => setReviewOpen(true)}>
+                Submit for Review
+              </Button>
+            )}
+            {canAnnotate && (
+              <Button
+                variant="brand"
+                onClick={() => setAddToDatasetOpen(true)}
+                disabled={!(hasReviewers ? job.approved_count : job.annotated_count)}
+              >
+                <Check className="size-4" />
+                {hasReviewers
+                  ? `Add ${job.approved_count} Approved Image${job.approved_count !== 1 ? "s" : ""} To Dataset`
+                  : `Add ${job.annotated_count} Image${job.annotated_count !== 1 ? "s" : ""} To Dataset`}
+              </Button>
+            )}
             <button
               onClick={() => navigate(`/projects/${projectId}/annotate`)}
               className="ml-1 text-muted-foreground hover:text-foreground"
@@ -406,46 +538,98 @@ export function JobPage() {
 
         <div className="mb-5 flex items-center justify-between">
           <div className="flex items-center gap-6 border-b border-border">
-            <button
-              onClick={() => setTab("unannotated")}
-              className={`flex items-center gap-2 border-b-2 px-1 pb-3 text-sm font-medium transition-colors ${
-                tab === "unannotated"
-                  ? "border-brand text-brand"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Unannotated
-              <span
-                className={`rounded-full px-2 py-0.5 text-xs ${
-                  tab === "unannotated" ? "bg-brand text-brand-foreground" : "bg-muted text-muted-foreground"
+            {(() => {
+              // A Reviewer's "To Do" is THEIR queue — images the labeler
+              // already sent for review — not the labeler's own unannotated
+              // queue, so for them this tab (value "annotated") leads, and
+              // the plain unannotated tab trails as a view-only reference
+              // of what the labeler hasn't gotten to yet. Everyone else
+              // keeps the original order (unannotated leads).
+              const unannotatedBtn = (
+                <button
+                  key="unannotated"
+                  onClick={() => setTab("unannotated")}
+                  className={`flex items-center gap-2 border-b-2 px-1 pb-3 text-sm font-medium transition-colors ${
+                    tab === "unannotated"
+                      ? "border-brand text-brand"
+                      : "border-transparent text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {isReviewerRole ? "Unannotated" : reviewUiActive ? "To Do" : "Unannotated"}
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-xs ${
+                      tab === "unannotated" ? "bg-brand text-brand-foreground" : "bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    {job.unannotated_count}
+                  </span>
+                </button>
+              )
+              const annotatedBtn = (
+                <button
+                  key="annotated"
+                  onClick={() => setTab("annotated")}
+                  className={`flex items-center gap-2 border-b-2 px-1 pb-3 text-sm font-medium transition-colors ${
+                    tab === "annotated"
+                      ? "border-brand text-brand"
+                      : "border-transparent text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {isReviewerRole ? "To Do" : "Annotated"}
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-xs ${
+                      tab === "annotated" ? "bg-brand text-brand-foreground" : "bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    {reviewUiActive ? job.pending_review_count : job.annotated_count}
+                  </span>
+                </button>
+              )
+              return isReviewerRole ? [annotatedBtn, unannotatedBtn] : [unannotatedBtn, annotatedBtn]
+            })()}
+            {reviewUiActive && (
+              <button
+                onClick={() => setTab("approved")}
+                className={`flex items-center gap-2 border-b-2 px-1 pb-3 text-sm font-medium transition-colors ${
+                  tab === "approved"
+                    ? "border-brand text-brand"
+                    : "border-transparent text-muted-foreground hover:text-foreground"
                 }`}
               >
-                {job.unannotated_count}
-              </span>
-            </button>
-            <button
-              onClick={() => setTab("annotated")}
-              className={`flex items-center gap-2 border-b-2 px-1 pb-3 text-sm font-medium transition-colors ${
-                tab === "annotated"
-                  ? "border-brand text-brand"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Annotated
-              <span
-                className={`rounded-full px-2 py-0.5 text-xs ${
-                  tab === "annotated" ? "bg-brand text-brand-foreground" : "bg-muted text-muted-foreground"
-                }`}
-              >
-                {job.annotated_count}
-              </span>
-            </button>
+                Approved
+                <span
+                  className={`rounded-full px-2 py-0.5 text-xs ${
+                    tab === "approved" ? "bg-brand text-brand-foreground" : "bg-muted text-muted-foreground"
+                  }`}
+                >
+                  {job.approved_count}
+                </span>
+              </button>
+            )}
           </div>
           <div className="flex items-center gap-3">
             <label className="flex items-center gap-1.5 text-sm text-muted-foreground">
               <Checkbox checked={allSelected} onCheckedChange={toggleSelectAll} />
               {selectedImageIds.length > 0 ? `${selectedImageIds.length} selected` : "Select all"}
             </label>
+            {showLabelerFilter && job.assignments.length > 0 && (
+              <>
+                <span className="text-sm text-muted-foreground">Labeler:</span>
+                <Select value={labelerFilter} onValueChange={setLabelerFilter}>
+                  <SelectTrigger className="w-40">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All labelers</SelectItem>
+                    {job.assignments.map((a) => (
+                      <SelectItem key={a.user_id} value={a.user_id}>
+                        {a.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </>
+            )}
             <span className="text-sm text-muted-foreground">Sort By:</span>
             <Select defaultValue="newest">
               <SelectTrigger className="w-36">
@@ -460,7 +644,7 @@ export function JobPage() {
         </div>
 
         {loadingImages ? (
-          <p className="py-16 text-center text-sm text-muted-foreground">Loading…</p>
+          <PageLoader />
         ) : images.length === 0 ? (
           <p className="py-16 text-center text-sm text-muted-foreground">No images in this tab.</p>
         ) : (
@@ -542,7 +726,7 @@ export function JobPage() {
             workspaceId={workspaceId}
             projectId={projectId}
             jobId={job.id}
-            labeledCount={job.annotated_count}
+            labeledCount={hasReviewers ? job.approved_count : job.annotated_count}
             remainingCount={job.unannotated_count}
             open={addToDatasetOpen}
             onOpenChange={setAddToDatasetOpen}

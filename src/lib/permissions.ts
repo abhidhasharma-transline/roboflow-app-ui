@@ -63,6 +63,25 @@ export function effectivePermissions(
   return { ...defaults, ...overrides } as Record<PermissionKey, boolean>
 }
 
+/** The sparse diff to actually persist as an override: only the keys where
+ *  `edited` differs from the role's own defaults. Saving the full 8-key
+ *  effective object instead (as if every key were customized) freezes
+ *  every permission at its CURRENT value forever — including ones the
+ *  person never touched — so a later role change (e.g. reviewer → labeler)
+ *  has nothing left to apply defaults to, and the member keeps their old
+ *  role's permissions under their new role. */
+export function diffFromRoleDefaults(
+  role: WorkspaceRole,
+  edited: Record<PermissionKey, boolean>
+): Record<string, boolean> {
+  const defaults = ROLE_DEFAULT_PERMISSIONS[role]
+  const diff: Record<string, boolean> = {}
+  for (const key of PERMISSION_KEYS) {
+    if (edited[key] !== defaults[key]) diff[key] = edited[key]
+  }
+  return diff
+}
+
 /** Just the permission keys that are `true`, in display order — for compact badge lists. */
 export function grantedPermissions(
   role: WorkspaceRole,

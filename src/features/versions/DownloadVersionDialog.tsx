@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/select"
 import { startVersionExport, getVersionExportStatus, checkVersionHasPolygon } from "@/lib/versionApi"
 import { YOLO_FORMATS, supportsSegmentation, SUGGESTED_SEGMENTATION_FORMAT } from "@/lib/yoloVersions"
+import { useToastStore } from "@/stores/toastStore"
 
 const POLL_INTERVAL_MS = 2000
 const MAX_POLL_ATTEMPTS = 300 // ~10 minutes
@@ -53,6 +54,16 @@ export function DownloadVersionDialog({
   // without the warning — a backend hiccup here shouldn't block the export.
   const [precheckLoading, setPrecheckLoading] = useState(true)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const addToast = useToastStore((s) => s.addToast)
+  const removeToast = useToastStore((s) => s.removeToast)
+  const toastIdRef = useRef<string | null>(null)
+
+  function clearProgressToast() {
+    if (toastIdRef.current) {
+      removeToast(toastIdRef.current)
+      toastIdRef.current = null
+    }
+  }
 
   function stopPolling() {
     if (pollRef.current) {
@@ -77,6 +88,7 @@ export function DownloadVersionDialog({
         .finally(() => setPrecheckLoading(false))
     } else {
       stopPolling()
+      clearProgressToast()
     }
   }, [open, workspaceId, projectId, versionId])
 
@@ -98,6 +110,7 @@ export function DownloadVersionDialog({
     setPhase("exporting")
     setPercent(0)
     setMessage("Starting export…")
+    toastIdRef.current = addToast({ variant: "loading", title: "Preparing export…" })
     try {
       const { export_id } = await startVersionExport(workspaceId, projectId, versionId, format)
       let attempts = 0
@@ -107,6 +120,8 @@ export function DownloadVersionDialog({
           stopPolling()
           setPhase("error")
           setMessage("This is taking longer than expected — try again in a bit.")
+          clearProgressToast()
+          addToast({ variant: "error", title: "Export is taking too long", description: "Please try again in a bit." })
           return
         }
         try {
@@ -117,10 +132,14 @@ export function DownloadVersionDialog({
             stopPolling()
             setPhase("ready")
             setDownloadUrl(res.download_url ?? null)
+            clearProgressToast()
+            addToast({ variant: "success", title: "Export ready" })
           } else if (res.status === "failed") {
             stopPolling()
             setPhase("error")
             setMessage(res.message || "Export failed — please try again.")
+            clearProgressToast()
+            addToast({ variant: "error", title: "Export failed", description: res.message || "Please try again." })
           }
         } catch {
           // transient network hiccup — next tick retries, capped by MAX_POLL_ATTEMPTS
@@ -129,6 +148,8 @@ export function DownloadVersionDialog({
     } catch {
       setPhase("error")
       setMessage("Couldn't start the export — please try again.")
+      clearProgressToast()
+      addToast({ variant: "error", title: "Couldn't start the export", description: "Please try again." })
     }
   }
 

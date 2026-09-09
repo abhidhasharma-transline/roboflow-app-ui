@@ -3,10 +3,12 @@ import { useNavigate, useParams } from "react-router-dom"
 import { ImageIcon, ArrowLeft, User, Maximize2, X, ChevronLeft, ChevronRight } from "lucide-react"
 import { Dialog, DialogContent } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
+import { PageLoader } from "@/components/shared/PageLoader"
 import { ScrollToTopButton } from "@/components/shared/ScrollToTopButton"
 import { useWorkspaceStore } from "@/stores/workspaceStore"
 import { listVersions, getVersionImages, type ProjectVersion, type VersionImageSummary } from "@/lib/versionApi"
 import { objectCoverViewBox } from "@/lib/thumbnailGeometry"
+import { preprocessingPreviewStyle } from "@/lib/versionPreview"
 
 const RESIZE_MODE_LABELS: Record<string, string> = {
   stretch: "Stretch to",
@@ -102,6 +104,7 @@ export function VersionImagesPage() {
   }, [versions])
 
   const version = versions.find((v) => v.id === versionId) ?? null
+  const previewStyle = preprocessingPreviewStyle(version?.preprocessing)
   const tabCounts = {
     train: version?.split_ratio?.train.count ?? 0,
     valid: version?.split_ratio?.valid.count ?? 0,
@@ -114,7 +117,7 @@ export function VersionImagesPage() {
         <div className="bg-foreground px-4 py-2.5 text-sm font-semibold text-background">Versions</div>
         <div className="p-3">
           {loadingVersions ? (
-            <p className="text-sm text-muted-foreground">Loading…</p>
+            <PageLoader />
           ) : (
             <div className="flex flex-col gap-2">
               {versions.map((v) => (
@@ -205,7 +208,7 @@ export function VersionImagesPage() {
 
           <div className="p-5 pt-0">
             {loadingImages ? (
-              <p className="py-8 text-sm text-muted-foreground">Loading…</p>
+              <PageLoader />
             ) : images.length === 0 ? (
               <p className="py-8 text-sm text-muted-foreground">No images in this split.</p>
             ) : (
@@ -217,7 +220,12 @@ export function VersionImagesPage() {
                     className="group relative aspect-square overflow-hidden rounded-md bg-muted [content-visibility:auto] [contain-intrinsic-size:0_150px]"
                   >
                     {img.thumbnail_url && (
-                      <img src={img.thumbnail_url} alt={img.filename} className="size-full object-cover" />
+                      <img
+                        src={img.thumbnail_url}
+                        alt={img.filename}
+                        className="size-full object-cover"
+                        style={previewStyle}
+                      />
                     )}
                     <ThumbAnnotations img={img} containerAspect={1} />
                     <span className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition-colors group-hover:bg-black/30 group-hover:opacity-100">
@@ -276,6 +284,7 @@ export function VersionImagesPage() {
                       src={images[previewIndex].image_url ?? undefined}
                       alt={images[previewIndex].filename}
                       className="max-h-[80vh] max-w-full object-contain"
+                      style={previewStyle}
                     />
                   ) : (
                     <div className="flex h-64 w-96 items-center justify-center text-sm text-muted-foreground">
