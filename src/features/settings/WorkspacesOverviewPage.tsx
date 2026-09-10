@@ -40,7 +40,11 @@ export function WorkspacesOverviewPage() {
         ) : (
           <div className="flex flex-col gap-4">
             {workspaces.map((workspace) => (
-              <WorkspaceManagementCard key={workspace.id} workspace={workspace} />
+              <WorkspaceManagementCard
+                key={workspace.id}
+                workspace={workspace}
+                onDeleted={(id) => setWorkspaces((prev) => prev.filter((w) => w.id !== id))}
+              />
             ))}
           </div>
         )}

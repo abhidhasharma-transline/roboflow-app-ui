@@ -90,6 +90,29 @@ export async function listWorkspaceInvitations(
   return res.data
 }
 
+export interface PlatformInvitation {
+  id: string
+  workspace_id: string
+  workspace_name: string
+  email: string
+  // The invited account's real name — null only if that account has since
+  // been deleted (invite_member only ever invites an existing account).
+  invitee_name: string | null
+  role: string
+  status: "pending" | "accepted" | "rejected" | "expired"
+  invited_by_name: string
+  created_at: string
+  accepted_at: string | null
+  expires_at: string
+}
+
+/** Super-admin-only — every invitation ever sent, any status, across every
+ *  workspace on the platform (not just one owner's own pending list). */
+export async function listAllInvitations(): Promise<PlatformInvitation[]> {
+  const res = await api.get<PlatformInvitation[]>("/workspaces/invitations/all")
+  return res.data
+}
+
 /** Invitations sent *to* the current user, across all workspaces. */
 export async function listMyInvitations(): Promise<MyInvitation[]> {
   const res = await api.get<MyInvitation[]>("/workspaces/my/invitations")

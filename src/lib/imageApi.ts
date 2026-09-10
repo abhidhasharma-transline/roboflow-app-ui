@@ -20,6 +20,35 @@ export async function getImage(
   return res.data
 }
 
+/** Just the two presigned URLs for one image — see get_job_images's own
+ *  tab="all" for why the annotation tool's pager doesn't get these for
+ *  free anymore and has to ask for them one image at a time instead. */
+export async function getImageUrl(
+  workspaceId: string,
+  projectId: string,
+  imageId: string
+): Promise<{ url: string; thumbnail_url: string | null }> {
+  const res = await api.get<{ url: string; thumbnail_url: string | null }>(
+    `/workspaces/${workspaceId}/projects/${projectId}/images/${imageId}/url`
+  )
+  return res.data
+}
+
+/** Which job this image currently sits in, if any — throws (404) for an
+ *  image that isn't in a job right now (e.g. already promoted to the
+ *  dataset). Used to turn an image-scoped notification (a comment mention)
+ *  into a real link into the annotation tool, which needs a job id. */
+export async function getImageJob(
+  workspaceId: string,
+  projectId: string,
+  imageId: string
+): Promise<{ job_id: string }> {
+  const res = await api.get<{ job_id: string }>(
+    `/workspaces/${workspaceId}/projects/${projectId}/images/${imageId}/job`
+  )
+  return res.data
+}
+
 export interface ProjectImageAnnotation {
   shape_type: "bbox" | "polygon"
   geometry: Record<string, unknown>

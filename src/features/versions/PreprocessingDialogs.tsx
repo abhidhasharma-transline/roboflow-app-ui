@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react"
-import { ImageIcon, Contrast, Shuffle } from "lucide-react"
+import { ImageIcon, Contrast, Shuffle, Scaling } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -442,6 +442,11 @@ export function RandomSampleDialog({
 }
 
 const EXTRA_PREPROCESSING_TILES = [
+  // Resize has its own always-visible slot on the main preprocessing list
+  // (like Auto-Orient) rather than living only here — but once someone
+  // removes it, this picker was the only way back in, and it wasn't
+  // offered here at all. Listed first since it's the most commonly re-added.
+  { id: "resize" as const, label: "Resize", icon: Scaling, style: {} },
   { id: "grayscale" as const, label: "Grayscale", icon: ImageIcon, style: { filter: "grayscale(1)" } },
   { id: "auto_contrast" as const, label: "Auto-Adjust Contrast", icon: Contrast, style: { filter: "contrast(1.3)" } },
   { id: "random_sample" as const, label: "Random Sample", icon: Shuffle, style: {} },
@@ -456,7 +461,7 @@ export function PreprocessingOptionsDialog({
   open: boolean
   onOpenChange: (open: boolean) => void
   thumbnailUrl: string | null
-  onSelect: (id: "grayscale" | "auto_contrast" | "random_sample") => void
+  onSelect: (id: "resize" | "grayscale" | "auto_contrast" | "random_sample") => void
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

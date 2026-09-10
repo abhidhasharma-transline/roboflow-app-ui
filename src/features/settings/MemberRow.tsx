@@ -11,8 +11,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog"
 import { initials, roleLabel } from "@/lib/userDisplay"
-import { effectivePermissions, diffFromRoleDefaults, PERMISSION_KEYS, PERMISSION_LABELS, type PermissionKey } from "@/lib/permissions"
+import { effectivePermissions, diffFromRoleDefaults, roleBadgeLabel, PERMISSION_KEYS, PERMISSION_LABELS, type PermissionKey } from "@/lib/permissions"
 import { getProjectColor } from "@/lib/projectColors"
 import { updateProjectMember, addProjectMember } from "@/lib/projectApi"
 import { updateWorkspaceMember, removeWorkspaceMember } from "@/lib/workspaceApi"
@@ -50,10 +58,6 @@ interface MemberRowProps {
   allProjects: Project[]
   canManage: boolean
   isSelf: boolean
-  /** True when this row is the viewer's own row AND the viewer is a super admin —
-   *  their workspace_members.role is a vestigial "admin" value they never actually
-   *  rely on (super_admin bypasses everything), so show that instead. */
-  selfIsSuperAdmin: boolean
   isOwner: boolean
   onRoleChange: (userId: string, role: WorkspaceRole) => void
   onRefetchOverrides: () => void
@@ -67,7 +71,6 @@ export function MemberRow({
   allProjects,
   canManage,
   isSelf,
-  selfIsSuperAdmin,
   isOwner,
   onRoleChange,
   onRefetchOverrides,
@@ -77,6 +80,8 @@ export function MemberRow({
   const [isAdding, setIsAdding] = useState(false)
   const [addingProjectId, setAddingProjectId] = useState<string | null>(null)
   const [draftPermissions, setDraftPermissions] = useState<Record<PermissionKey, boolean> | null>(null)
+  const [removeOpen, setRemoveOpen] = useState(false)
+  const [removing, setRemoving] = useState(false)
   const addToast = useToastStore((s) => s.addToast)
 
   function cancelAdd() {
@@ -87,6 +92,17 @@ export function MemberRow({
 
   const overriddenProjectIds = new Set(overrides.map((o) => o.project.id))
   const availableToAdd = allProjects.filter((p) => !overriddenProjectIds.has(p.id))
+
+  // Extra capability granted on top of their actual role (e.g. a Labeler
+  // whose "Review Images" was switched on) — see roleBadgeLabel for why
+  // this doesn't just replace the role itself.
+  const memberEffective = effectivePermissions(member.role, member.permission_overrides)
+  const extraRole =
+    member.role === "labeler" && memberEffective.review_images
+      ? "Reviewer"
+      : member.role === "reviewer" && memberEffective.annotate
+        ? "Labeler"
+        : null
 
   async function savePermissions(projectId: string, permissions: Record<string, boolean>, isNew: boolean) {
     try {
@@ -123,15 +139,16 @@ export function MemberRow({
   }
 
   async function handleRemove() {
-    if (!window.confirm(`Remove ${member.username} from this workspace? They'll lose access to every project in it.`)) {
-      return
-    }
+    setRemoving(true)
     try {
       await removeWorkspaceMember(workspaceId, member.user_id)
       addToast({ variant: "success", title: "Member removed" })
+      setRemoveOpen(false)
       onRefetchMembers()
     } catch (err) {
       addToast({ variant: "error", title: "Couldn't remove member", description: extractErrorMessage(err) })
+    } finally {
+      setRemoving(false)
     }
   }
 
@@ -179,33 +196,42 @@ export function MemberRow({
               )}
             </div>
           )}
-          {!member.has_full_project_access && (
+          {!member.has_full_project_access && !member.is_super_admin && (
             <span className="text-xs text-muted-foreground">Limited access</span>
           )}
 
-          {selfIsSuperAdmin ? null : canManage && !isSelf ? (
-            <Select value={member.role} onValueChange={(v) => onRoleChange(member.user_id, v as WorkspaceRole)}>
-              <SelectTrigger className="h-8 w-[110px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {ROLE_OPTIONS.map((r) => (
-                  <SelectItem key={r} value={r}>
-                    {roleLabel(r)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          {member.is_super_admin ? (
+            <Badge variant="secondary">Super Admin</Badge>
+          ) : canManage && !isSelf ? (
+            <>
+              {extraRole && (
+                <Badge variant="outline" className="text-[11px]">
+                  +{extraRole}
+                </Badge>
+              )}
+              <Select value={member.role} onValueChange={(v) => onRoleChange(member.user_id, v as WorkspaceRole)}>
+                <SelectTrigger className="h-8 w-[110px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ROLE_OPTIONS.map((r) => (
+                    <SelectItem key={r} value={r}>
+                      {roleLabel(r)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </>
           ) : (
-            <Badge variant="secondary">{roleLabel(member.role)}</Badge>
+            <Badge variant="secondary">{roleBadgeLabel(member.role, member.permission_overrides)}</Badge>
           )}
 
-          {!selfIsSuperAdmin && canManage && !isSelf && !isOwner && (
+          {canManage && !isSelf && !isOwner && (
             <Button
               variant="ghost"
               size="icon"
               className="size-8 text-muted-foreground hover:text-destructive"
-              onClick={handleRemove}
+              onClick={() => setRemoveOpen(true)}
               title="Remove from workspace"
               aria-label={`Remove ${member.username} from workspace`}
             >
@@ -217,10 +243,11 @@ export function MemberRow({
 
       {expanded && (
         <div className="mt-3 ml-8 flex flex-col gap-3 border-l border-border pl-4">
-          {selfIsSuperAdmin ? (
+          {member.is_super_admin ? (
             <p className="text-xs text-muted-foreground">
-              You have full access across the entire system as a super admin — project-level
-              permissions don't apply to you.
+              {isSelf ? "You have" : "This member has"} full access across the entire system as a
+              super admin — workspace and project-level permissions don't apply
+              {isSelf ? " to you" : ""}.
             </p>
           ) : (
             <>
@@ -357,6 +384,25 @@ export function MemberRow({
           )}
         </div>
       )}
+
+      <Dialog open={removeOpen} onOpenChange={setRemoveOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove {member.username} from this workspace?</DialogTitle>
+            <DialogDescription>
+              They'll lose access to every project in it. This can't be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRemoveOpen(false)} disabled={removing}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleRemove} disabled={removing}>
+              {removing ? "Removing…" : "Remove member"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

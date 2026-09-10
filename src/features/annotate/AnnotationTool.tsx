@@ -47,6 +47,8 @@ import {
   ScanSearch,
   ArrowUp,
   AtSign,
+  Loader2,
+  Send,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -76,7 +78,7 @@ import {
   listImageTags, addImageTag, removeImageTag, addImageMetadata, removeImageMetadata,
   type ImageTag,
 } from "@/lib/tagApi"
-import { getImage, type ImageDetail } from "@/lib/imageApi"
+import { getImage, getImageUrl, type ImageDetail } from "@/lib/imageApi"
 import {
   listComments, createComment, deleteComment, getImageHistory,
   removeImageFromProject, setAsCoverPhoto, addImageToDataset, sendImageToUnannotated,
@@ -93,6 +95,7 @@ import { NEW_CLASS_COLORS, tools, SHORTCUT_GROUPS, leftNavItems } from "./annota
 import { clamp, isTypingInField } from "./annotationToolUtils"
 import { AnnotationBoxOverlay } from "./AnnotationBoxOverlay"
 import { ClassRow } from "./ClassRow"
+import { SubmitForReviewDialog } from "./SubmitForReviewDialog"
 
 
 export function AnnotationToolPage() {
@@ -122,6 +125,8 @@ export function AnnotationToolPage() {
   const [settingCover, setSettingCover] = useState(false)
   const [removingFromProject, setRemovingFromProject] = useState(false)
   const [togglingDatasetStatus, setTogglingDatasetStatus] = useState(false)
+  const [submitReviewOpen, setSubmitReviewOpen] = useState(false)
+  const [projectHasReviewers, setProjectHasReviewers] = useState(false)
 
   const [activeLeftNav, setActiveLeftNav] = useState<"labels" | "attributes" | "comments" | "history" | "raw">("labels")
   const [imageDetail, setImageDetail] = useState<ImageDetail | null>(null)
@@ -219,12 +224,20 @@ export function AnnotationToolPage() {
 
   const [hoverViewportPos, setHoverViewportPos] = useState<Point | null>(null)
   const [spaceHeld, setSpaceHeld] = useState(false)
+  // Mirrors `spaceHeld`, read synchronously by handleMouseDown instead of the
+  // state value — avoids any doubt about whether a just-set piece of React
+  // state has actually re-rendered by the time a native mousedown fires.
+  const spaceHeldRef = useRef(false)
   const [isPanning, setIsPanning] = useState(false)
   // Pan is a CSS translate on the canvas stage (not scrollLeft/scrollTop) so the
   // viewport never grows a scrollbar and the crosshair guides can extend past
   // the image edges into the surrounding canvas, matching Roboflow's feel.
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const panStartRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null)
+  // One-shot: set when a pan-drag ends, consumed by the very next
+  // handleCanvasClick (the native "click" a pointerup always fires,
+  // regardless of drag distance) so it doesn't misread that as a real click.
+  const justPannedRef = useRef(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set())
 
@@ -241,6 +254,50 @@ export function AnnotationToolPage() {
 
   const currentImage = images[currentIndex]
   const isInDataset = currentImage?.status === "dataset"
+
+  // The job-wide image list (tab="all", fetched below) no longer carries
+  // presigned URLs — see get_job_images — so the actual url/thumbnail_url
+  // for whichever ONE image is on screen is resolved here instead, one at
+  // a time, and cached by id so paging back to an already-visited image
+  // is instant rather than re-fetching it.
+  const [resolvedImageUrls, setResolvedImageUrls] = useState<Record<string, string>>({})
+  const [loadingImageUrl, setLoadingImageUrl] = useState(false)
+  const currentImageUrl = currentImage ? resolvedImageUrls[currentImage.id] : undefined
+
+  useEffect(() => {
+    if (!workspaceId || !projectId || !currentImage || resolvedImageUrls[currentImage.id]) return
+    let cancelled = false
+    setLoadingImageUrl(true)
+    getImageUrl(workspaceId, projectId, currentImage.id)
+      .then((res) => {
+        if (cancelled) return
+        setResolvedImageUrls((prev) => ({ ...prev, [currentImage.id]: res.url }))
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingImageUrl(false)
+      })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceId, projectId, currentImage?.id])
+
+  // Prefetch the next image's URL a beat after the current one settles, so
+  // paging forward through a job feels instant instead of a fresh fetch
+  // every single time — a nice-to-have, not something correctness depends
+  // on (the effect above still covers it if this hasn't resolved yet).
+  useEffect(() => {
+    if (!workspaceId || !projectId) return
+    const next = images[currentIndex + 1]
+    if (!next || resolvedImageUrls[next.id]) return
+    const timer = setTimeout(() => {
+      getImageUrl(workspaceId, projectId, next.id).then((res) => {
+        setResolvedImageUrls((prev) => (prev[next.id] ? prev : { ...prev, [next.id]: res.url }))
+      })
+    }, 200)
+    return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceId, projectId, currentIndex, images])
 
   // The canvas box used to be a fixed 800x560 (10:7) regardless of the
   // actual image's aspect ratio, so `object-cover` silently cropped
@@ -346,6 +403,17 @@ export function AnnotationToolPage() {
   useEffect(() => {
     if (!workspaceId || !projectId) return
     listProjectMembers(workspaceId, projectId).then(setProjectMembers).catch(() => {})
+  }, [workspaceId, projectId])
+
+  // Same project-wide "does review apply here at all" check JobPage uses to
+  // gate its own Submit for Review / Add to Dataset buttons — drives the
+  // "Send Job for Review" menu item below so it only shows up when it'd
+  // actually do something.
+  useEffect(() => {
+    if (!workspaceId || !projectId) return
+    listProjectMembers(workspaceId, projectId, "reviewer")
+      .then((members) => setProjectHasReviewers(members.length > 0))
+      .catch(() => {})
   }, [workspaceId, projectId])
 
   useEffect(() => {
@@ -673,38 +741,32 @@ export function AnnotationToolPage() {
     function onKeyDown(e: KeyboardEvent) {
       if (e.code === "Space" && !isTypingInField() && !shortcutsOpen) {
         e.preventDefault()
+        spaceHeldRef.current = true
         setSpaceHeld(true)
       }
     }
     function onKeyUp(e: KeyboardEvent) {
-      if (e.code === "Space") setSpaceHeld(false)
+      if (e.code === "Space") {
+        spaceHeldRef.current = false
+        setSpaceHeld(false)
+      }
+    }
+    // Space held while the window/tab itself loses focus (alt-tab, devtools
+    // click) never gets a matching keyup — left stuck, a later click-drag
+    // anywhere would silently start panning with no way to have known why.
+    function onWindowBlur() {
+      spaceHeldRef.current = false
+      setSpaceHeld(false)
     }
     window.addEventListener("keydown", onKeyDown)
     window.addEventListener("keyup", onKeyUp)
+    window.addEventListener("blur", onWindowBlur)
     return () => {
       window.removeEventListener("keydown", onKeyDown)
       window.removeEventListener("keyup", onKeyUp)
+      window.removeEventListener("blur", onWindowBlur)
     }
   }, [shortcutsOpen])
-
-  useEffect(() => {
-    if (!isPanning) return
-    function onMove(e: MouseEvent) {
-      const start = panStartRef.current
-      if (!start) return
-      setPan({ x: start.panX + (e.clientX - start.x), y: start.panY + (e.clientY - start.y) })
-    }
-    function onUp() {
-      panStartRef.current = null
-      setIsPanning(false)
-    }
-    window.addEventListener("mousemove", onMove)
-    window.addEventListener("mouseup", onUp)
-    return () => {
-      window.removeEventListener("mousemove", onMove)
-      window.removeEventListener("mouseup", onUp)
-    }
-  }, [isPanning])
 
   useEffect(() => {
     if (!contextMenu) return
@@ -875,13 +937,21 @@ export function AnnotationToolPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingShape, editingAnnotationId, annotations, resizeOverride, zoom, pan.x, pan.y])
 
-  function startPan(e: React.MouseEvent) {
+  function startPan(e: React.PointerEvent) {
+    // Pointer capture keeps this exact element receiving move/up events for
+    // the rest of the gesture even if the cursor ends up somewhere else
+    // (another overlay, outside the canvas, even outside the window) —
+    // the previous approach (plain mousedown + separate window-level
+    // mousemove/mouseup listeners) had no such guarantee.
+    ;(e.currentTarget as Element).setPointerCapture?.(e.pointerId)
     panStartRef.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y }
     setIsPanning(true)
   }
 
-  function handleMouseDown(e: React.MouseEvent) {
-    if (spaceHeld) {
+  function handleMouseDown(e: React.PointerEvent) {
+    // Read the ref, not the `spaceHeld` state closure — synchronous, so
+    // there's no dependence on a re-render having landed before this fires.
+    if (spaceHeldRef.current) {
       startPan(e)
       return
     }
@@ -904,7 +974,12 @@ export function AnnotationToolPage() {
     setDrawStart(getRelativePos(e))
   }
 
-  function handleMouseMove(e: React.MouseEvent) {
+  function handleMouseMove(e: React.PointerEvent) {
+    if (isPanning) {
+      const start = panStartRef.current
+      if (start) setPan({ x: start.panX + (e.clientX - start.x), y: start.panY + (e.clientY - start.y) })
+      return
+    }
     const pos = getRelativePos(e)
     const viewportRect = scrollRef.current?.getBoundingClientRect()
     if (viewportRect) {
@@ -963,6 +1038,16 @@ export function AnnotationToolPage() {
   }
 
   function handleCanvasClick(e: React.MouseEvent) {
+    // A pan-drag ends with a pointerup on this same element, which still
+    // fires a native "click" right afterward regardless of how far the drag
+    // moved — by then isPanning is already back to false (handleMouseUp
+    // clears it first), so this checks the one-shot flag it leaves behind
+    // instead. Without it, panning while the Polygon tool is active drops a
+    // stray point wherever the drag happened to end.
+    if (justPannedRef.current) {
+      justPannedRef.current = false
+      return
+    }
     if (activeTool === "comment") {
       setPendingComment(getRelativePos(e))
       setCommentDraft("")
@@ -987,7 +1072,14 @@ export function AnnotationToolPage() {
     closePolygon(polygonPoints.slice(0, -1))
   }
 
-  function handleMouseUp() {
+  function handleMouseUp(e: React.PointerEvent) {
+    if (isPanning) {
+      ;(e.currentTarget as Element).releasePointerCapture?.(e.pointerId)
+      panStartRef.current = null
+      justPannedRef.current = true
+      setIsPanning(false)
+      return
+    }
     if (isBrushing) {
       setIsBrushing(false)
       const points = brushPoints
@@ -1082,10 +1174,11 @@ export function AnnotationToolPage() {
   }
 
   async function handleDownloadImage() {
-    if (!currentImage) return
+    if (!currentImage || !workspaceId || !projectId) return
     setDownloadingImage(true)
     try {
-      const res = await fetch(currentImage.url)
+      const url = currentImageUrl ?? (await getImageUrl(workspaceId, projectId, currentImage.id)).url
+      const res = await fetch(url)
       const blob = await res.blob()
       const objectUrl = URL.createObjectURL(blob)
       const a = document.createElement("a")
@@ -1164,6 +1257,19 @@ export function AnnotationToolPage() {
       const status = (err as { response?: { status?: number } })?.response?.status
       if (status === 404) {
         dropCurrentImageFromPager()
+      } else if (status === 400) {
+        // The project has a reviewer and this image hasn't been approved
+        // yet (_dataset_blocked_image_ids on the backend) — the generic
+        // "please try again" was a dead end here, since retrying the exact
+        // same action fails the exact same way every time. Surface the
+        // real reason and offer the actual way forward right in the toast.
+        addToast({
+          variant: "error",
+          title: "Couldn't add to dataset",
+          description: extractErrorMessage(err),
+          actionLabel: "Send for Review",
+          onAction: () => setSubmitReviewOpen(true),
+        })
       } else {
         addToast({ variant: "error", title: "Couldn't add to dataset", description: "Please try again." })
       }
@@ -1586,8 +1692,13 @@ export function AnnotationToolPage() {
 
   if (!currentImage) {
     return (
-      <div className="flex h-screen items-center justify-center bg-background">
-        <PageLoader />
+      <div className="flex h-screen flex-col items-center justify-center gap-4 bg-background">
+        <div className="relative flex size-16 items-center justify-center">
+          <span className="absolute inset-0 animate-ping rounded-full bg-brand/15" />
+          <span className="absolute inset-0 rounded-full border-2 border-brand/20" />
+          <ImageIcon className="size-6 text-brand" />
+        </div>
+        <p className="text-sm text-muted-foreground">Opening job…</p>
       </div>
     )
   }
@@ -1614,8 +1725,9 @@ export function AnnotationToolPage() {
           <Button variant="ghost" size="icon" onClick={goPrev} disabled={currentIndex === 0}>
             <ChevronLeft className="size-4" />
           </Button>
-          <span className="text-sm text-muted-foreground">
+          <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
             {currentIndex + 1} / {images.length}
+            {loadingImageUrl && <Loader2 className="size-3 animate-spin text-muted-foreground" />}
           </span>
           <Button
             variant="ghost"
@@ -1707,6 +1819,12 @@ export function AnnotationToolPage() {
                 Remove From Project
               </DropdownMenuItem>
               <DropdownMenuSeparator />
+              {projectHasReviewers && (
+                <DropdownMenuItem onClick={() => setSubmitReviewOpen(true)}>
+                  <Send className="size-3.5" />
+                  Send Job for Review
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem disabled={movingToUnassigned} onClick={handleMoveToUnassigned}>
                 Move to unassigned
               </DropdownMenuItem>
@@ -2037,6 +2155,42 @@ export function AnnotationToolPage() {
                         closeAnnotationEditor()
                       }
                     }
+                    // Same reasoning as Backspace/Delete above — this box
+                    // auto-focuses the moment the editor opens, so the
+                    // page-level ArrowUp/ArrowDown (cycle class) and 1-9
+                    // (jump to class) shortcuts never get a chance to fire;
+                    // without this they'd silently do nothing for as long as
+                    // the editor stayed open, which is effectively always.
+                    // Single-line inputs don't use Up/Down for anything, so
+                    // that one's a free intercept; digits could theoretically
+                    // be part of a real class name search, but the shortcut
+                    // is documented to just work whenever the editor's open,
+                    // so it wins here the same way it does globally.
+                    if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+                      e.preventDefault()
+                      const filtered = classes.filter((c) =>
+                        c.name.toLowerCase().includes(pendingClassName.trim().toLowerCase())
+                      )
+                      if (filtered.length === 0) return
+                      const i = filtered.findIndex((c) => c.id === pendingSelectedClassId)
+                      const next =
+                        e.key === "ArrowUp"
+                          ? filtered[i <= 0 ? filtered.length - 1 : i - 1]
+                          : filtered[i < 0 || i >= filtered.length - 1 ? 0 : i + 1]
+                      setPendingSelectedClassId(next.id)
+                      return
+                    }
+                    if (e.key >= "1" && e.key <= "9") {
+                      const filtered = classes.filter((c) =>
+                        c.name.toLowerCase().includes(pendingClassName.trim().toLowerCase())
+                      )
+                      const picked = filtered[Number(e.key) - 1]
+                      if (picked) {
+                        e.preventDefault()
+                        if (pendingShape) handleSavePendingShape(picked.id)
+                        else handleUpdateAnnotationClass(picked.id)
+                      }
+                    }
                   }}
                   placeholder="Search or create a class…"
                   className="h-8 text-sm"
@@ -2262,9 +2416,9 @@ export function AnnotationToolPage() {
           <div ref={scrollRef} className="relative flex flex-1 items-center justify-center overflow-hidden">
             <div
               ref={canvasRef}
-              onMouseDown={handleMouseDown}
-              onMouseMove={handleMouseMove}
-              onMouseUp={handleMouseUp}
+              onPointerDown={handleMouseDown}
+              onPointerMove={handleMouseMove}
+              onPointerUp={handleMouseUp}
               onMouseLeave={() => setHoverViewportPos(null)}
               onClick={handleCanvasClick}
               onDoubleClick={handleCanvasDoubleClick}
@@ -2285,17 +2439,26 @@ export function AnnotationToolPage() {
                       : "default",
               }}
             >
-              <img
-                src={currentImage.url}
-                alt={currentImage.filename}
-                className="size-full rounded object-cover"
-                style={{ filter: `contrast(${contrast}%) brightness(${brightness}%)` }}
-                draggable={false}
-                onLoad={(e) => {
-                  const { naturalWidth, naturalHeight } = e.currentTarget
-                  if (naturalWidth && naturalHeight) setImageAspect(naturalWidth / naturalHeight)
-                }}
-              />
+              {currentImageUrl ? (
+                <img
+                  src={currentImageUrl}
+                  alt={currentImage.filename}
+                  className="size-full rounded object-cover"
+                  style={{ filter: `contrast(${contrast}%) brightness(${brightness}%)` }}
+                  draggable={false}
+                  onLoad={(e) => {
+                    const { naturalWidth, naturalHeight } = e.currentTarget
+                    if (naturalWidth && naturalHeight) setImageAspect(naturalWidth / naturalHeight)
+                  }}
+                />
+              ) : (
+                <div className="flex size-full items-center justify-center rounded bg-muted/30">
+                  <div className="relative flex size-12 items-center justify-center">
+                    <span className="absolute inset-0 animate-ping rounded-full bg-brand/20" />
+                    <Loader2 className="size-5 animate-spin text-brand" />
+                  </div>
+                </div>
+              )}
               {bgDarkness > 0 && (
                 <div
                   className="pointer-events-none absolute inset-0 rounded"
@@ -3033,6 +3196,17 @@ export function AnnotationToolPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {workspaceId && projectId && jobId && (
+        <SubmitForReviewDialog
+          workspaceId={workspaceId}
+          projectId={projectId}
+          jobId={jobId}
+          open={submitReviewOpen}
+          onOpenChange={setSubmitReviewOpen}
+          onSubmitted={() => addToast({ variant: "success", title: "Sent for review" })}
+        />
       )}
     </div>
   )

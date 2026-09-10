@@ -268,7 +268,7 @@ export function WorkspaceMembersPage() {
           </div>
         )}
 
-        {canManage && (
+        {canManage && !workspace?.is_personal && (
           <div className="mt-8 flex items-center justify-between gap-4 rounded-lg border border-destructive/30 p-5">
             <div>
               <h2 className="mb-1 text-base font-semibold text-foreground">Delete Workspace</h2>

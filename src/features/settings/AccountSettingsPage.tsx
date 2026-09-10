@@ -43,8 +43,8 @@ export function AccountSettingsPage() {
 
   useEffect(() => {
     if (!user) return
-    setFirstName(user.first_name)
-    setLastName(user.last_name)
+    setFirstName(user.first_name ?? "")
+    setLastName(user.last_name ?? "")
     setPhone(user.phone ?? "")
   }, [user])
 
@@ -192,10 +192,12 @@ export function AccountSettingsPage() {
             <div className="rounded-lg border border-border p-5">
               <div className="mb-4 flex items-center justify-between">
                 <SectionHeading icon={Building2}>Workspaces</SectionHeading>
-                <Button variant="outline" size="sm" onClick={() => setCreateWorkspaceOpen(true)}>
-                  <Plus className="size-3.5" />
-                  Create Workspace
-                </Button>
+                {user?.role === "super_admin" && (
+                  <Button variant="outline" size="sm" onClick={() => setCreateWorkspaceOpen(true)}>
+                    <Plus className="size-3.5" />
+                    Create Workspace
+                  </Button>
+                )}
               </div>
 
               {isLoadingWorkspaces ? (

@@ -2,8 +2,8 @@
  *  carries first_name/last_name (until the backend's members-list endpoint
  *  adds them), so both types need to satisfy this. */
 interface NameLike {
-  first_name?: string
-  last_name?: string
+  first_name?: string | null
+  last_name?: string | null
   username: string
 }
 

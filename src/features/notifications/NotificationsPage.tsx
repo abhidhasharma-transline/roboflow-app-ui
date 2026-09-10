@@ -9,6 +9,9 @@ import {
   type AppNotification,
 } from "@/lib/notificationApi"
 import { useWorkspaceStore } from "@/stores/workspaceStore"
+import { useNotificationStore } from "@/stores/notificationStore"
+import { useToastStore } from "@/stores/toastStore"
+import { resolveNotificationPath } from "@/lib/notificationNav"
 import { PageLoader } from "@/components/shared/PageLoader"
 
 function timeAgo(iso: string) {
@@ -30,6 +33,8 @@ export function NotificationsPage() {
   const navigate = useNavigate()
   const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace)
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
+  const refetchUnreadCount = useNotificationStore((s) => s.refetchUnreadCount)
+  const addToast = useToastStore((s) => s.addToast)
 
   function refetch() {
     setLoading(true)
@@ -43,20 +48,26 @@ export function NotificationsPage() {
       setNotifications((prev) => prev.map((x) => (x.id === n.id ? { ...x, is_read: true } : x)))
       try {
         await markNotificationRead(n.id)
+        refetchUnreadCount()
       } catch {
         setNotifications((prev) => prev.map((x) => (x.id === n.id ? { ...x, is_read: false } : x)))
       }
     }
-    // "You were assigned to review X" / "N image(s) sent back for changes in
-    // X" both carry entity_type="job" — jump straight to that job's page
-    // instead of leaving the click a dead end (previously this only ever
-    // marked-read, so a Reviewer had no way to actually reach the job they
-    // were just notified about).
-    if (n.entity_type === "job" && n.entity_id && n.project_id) {
-      if (n.workspace_id && n.workspace_id !== activeWorkspaceId) {
-        setActiveWorkspace(n.workspace_id)
-      }
-      navigate(`/projects/${n.project_id}/annotate/job/${n.entity_id}`)
+
+    if (!n.project_id) return
+    if (n.workspace_id && n.workspace_id !== activeWorkspaceId) {
+      setActiveWorkspace(n.workspace_id)
+    }
+
+    const path = await resolveNotificationPath(n, activeWorkspaceId)
+    if (path) {
+      navigate(path)
+    } else if (n.entity_type === "image") {
+      addToast({
+        variant: "error",
+        title: "Can't open that image",
+        description: "It's no longer in an active job.",
+      })
     }
   }
 
@@ -65,6 +76,7 @@ export function NotificationsPage() {
     try {
       await markAllNotificationsRead()
       setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })))
+      refetchUnreadCount()
     } finally {
       setMarkingAll(false)
     }

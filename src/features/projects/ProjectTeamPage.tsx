@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { useParams } from "react-router-dom"
-import { Crown, ShieldCheck, UserX } from "lucide-react"
+import { Crown, ShieldCheck, UserPlus, UserX } from "lucide-react"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/select"
 import { SectionHeading } from "@/components/shared/SectionHeading"
 import { initials, fullName, roleLabel } from "@/lib/userDisplay"
-import { effectivePermissions, diffFromRoleDefaults, PERMISSION_KEYS, PERMISSION_LABELS } from "@/lib/permissions"
+import { effectivePermissions, diffFromRoleDefaults, roleBadgeLabel, PERMISSION_KEYS, PERMISSION_LABELS } from "@/lib/permissions"
 import {
   listProjectMembers,
   updateProjectMember,
@@ -31,10 +31,12 @@ import {
   removeProjectMember,
   transferProjectOwner,
 } from "@/lib/projectApi"
+import { listWorkspaceMembers } from "@/lib/workspaceApi"
 import { useWorkspaceStore } from "@/stores/workspaceStore"
 import { useAuthStore } from "@/stores/authStore"
 import { useToastStore } from "@/stores/toastStore"
 import type { ProjectMember } from "@/types/project"
+import type { WorkspaceMember } from "@/types/workspace"
 import type { WorkspaceRole } from "@/types/auth"
 
 function extractErrorMessage(err: unknown): string {
@@ -59,6 +61,16 @@ export function ProjectTeamPage() {
   const [transferTarget, setTransferTarget] = useState<string | null>(null)
   const [transferring, setTransferring] = useState(false)
 
+  // For the "+ Add member" dialog — the workspace's full roster, so someone
+  // already in the workspace but not yet on THIS project (e.g. added to the
+  // workspace before this project existed, or just never ticked for it) can
+  // be granted access without having to go through Settings.
+  const [workspaceMembers, setWorkspaceMembers] = useState<WorkspaceMember[]>([])
+  const [addOpen, setAddOpen] = useState(false)
+  const [addUserId, setAddUserId] = useState<string | null>(null)
+  const [addRole, setAddRole] = useState<WorkspaceRole>("labeler")
+  const [adding, setAdding] = useState(false)
+
   function refetch() {
     if (!workspaceId || !projectId) return
     setIsLoading(true)
@@ -70,9 +82,44 @@ export function ProjectTeamPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(refetch, [workspaceId, projectId])
 
+  useEffect(() => {
+    if (!workspaceId) return
+    listWorkspaceMembers(workspaceId).then(setWorkspaceMembers).catch(() => {})
+  }, [workspaceId])
+
   const owner = members.find((m) => m.is_owner)
   const canManageOwnership =
     isSuperAdmin || (owner !== undefined && owner.user_id === currentUser?.id)
+
+  const onProjectUserIds = new Set(members.map((m) => m.user_id))
+  const addCandidates = workspaceMembers.filter((wm) => !onProjectUserIds.has(wm.user_id))
+
+  function openAddDialog() {
+    setAddUserId(null)
+    setAddRole("labeler")
+    setAddOpen(true)
+  }
+
+  function pickAddCandidate(userId: string) {
+    setAddUserId(userId)
+    const candidate = addCandidates.find((c) => c.user_id === userId)
+    if (candidate) setAddRole(candidate.role)
+  }
+
+  async function handleAddMember() {
+    if (!workspaceId || !projectId || !addUserId) return
+    setAdding(true)
+    try {
+      await addProjectMember(workspaceId, projectId, addUserId, addRole, effectivePermissions(addRole, null))
+      addToast({ variant: "success", title: "Member added to project" })
+      setAddOpen(false)
+      refetch()
+    } catch (err) {
+      addToast({ variant: "error", title: "Couldn't add member", description: extractErrorMessage(err) })
+    } finally {
+      setAdding(false)
+    }
+  }
 
   async function togglePermission(member: ProjectMember, key: string, value: boolean) {
     if (!workspaceId || !projectId) return
@@ -127,12 +174,20 @@ export function ProjectTeamPage() {
     <div className="mx-auto max-w-3xl px-6 py-8">
       <div className="mb-6 flex items-center justify-between">
         <SectionHeading icon={ShieldCheck}>Team</SectionHeading>
-        {canManageOwnership && members.length > 1 && (
-          <Button variant="outline" size="sm" onClick={() => setTransferOpen(true)}>
-            <Crown className="size-3.5" />
-            Transfer Ownership
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {canManageOwnership && addCandidates.length > 0 && (
+            <Button variant="outline" size="sm" onClick={openAddDialog}>
+              <UserPlus className="size-3.5" />
+              Add member
+            </Button>
+          )}
+          {canManageOwnership && members.length > 1 && (
+            <Button variant="outline" size="sm" onClick={() => setTransferOpen(true)}>
+              <Crown className="size-3.5" />
+              Transfer Ownership
+            </Button>
+          )}
+        </div>
       </div>
 
       {isLoading ? (
@@ -175,7 +230,9 @@ export function ProjectTeamPage() {
 
                   <div className="flex items-center gap-2">
                     <Badge variant="outline">
-                      {member.is_super_admin ? "Super Admin" : roleLabel(member.role)}
+                      {member.is_super_admin
+                        ? "Super Admin"
+                        : roleBadgeLabel(member.role as WorkspaceRole, member.permission_overrides)}
                     </Badge>
                     {isSuperAdmin && !member.is_owner && !isSelf && (
                       <Button
@@ -205,7 +262,7 @@ export function ProjectTeamPage() {
                         <span className="text-muted-foreground">{PERMISSION_LABELS[key]}</span>
                         <Switch
                           checked={effective[key]}
-                          disabled={!canEditGrid || !effective[key]}
+                          disabled={!canEditGrid}
                           onCheckedChange={(v) => togglePermission(member, key, v)}
                         />
                       </label>
@@ -247,6 +304,55 @@ export function ProjectTeamPage() {
             </Button>
             <Button variant="brand" onClick={handleTransfer} disabled={transferring || !transferTarget}>
               {transferring ? "Transferring…" : "Transfer"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={addOpen} onOpenChange={adding ? undefined : setAddOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add member to this project</DialogTitle>
+            <DialogDescription>
+              Pick someone already in the workspace — they'll get project access with the role
+              you choose below, independent of their workspace-level role.
+            </DialogDescription>
+          </DialogHeader>
+
+          <Select value={addUserId ?? undefined} onValueChange={pickAddCandidate}>
+            <SelectTrigger>
+              <SelectValue placeholder="Choose a workspace member" />
+            </SelectTrigger>
+            <SelectContent>
+              {addCandidates.map((c) => (
+                <SelectItem key={c.user_id} value={c.user_id}>
+                  {fullName(c)} ({c.email})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {addUserId && (
+            <Select value={addRole} onValueChange={(v) => setAddRole(v as WorkspaceRole)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {(["admin", "labeler", "reviewer"] as WorkspaceRole[]).map((r) => (
+                  <SelectItem key={r} value={r}>
+                    {roleLabel(r)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddOpen(false)} disabled={adding}>
+              Cancel
+            </Button>
+            <Button variant="brand" onClick={handleAddMember} disabled={adding || !addUserId}>
+              {adding ? "Adding…" : "Add to project"}
             </Button>
           </DialogFooter>
         </DialogContent>

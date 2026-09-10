@@ -42,6 +42,14 @@ export interface ProjectVersion {
   split_ratio: Record<"train" | "valid" | "test", VersionSplitStat> | null
   preprocessing: PreprocessingConfig | null
   augmentations: Record<string, { label: string }> | null
+  /** "done" — image_count/split_ratio above are already the final, real,
+   *  downloadable counts (true immediately when there's no augmentation at
+   *  all). "pending"/"processing" — augmented Train variants are still
+   *  being generated in the background; those same counts are still the
+   *  PRE-generation numbers until this flips to "done". "failed" — the
+   *  background job errored; counts stay at pre-generation numbers. */
+  augmentation_status: "pending" | "processing" | "done" | "failed"
+  augmentation_progress: number
   created_at: string
   created_by_name: string | null
 }

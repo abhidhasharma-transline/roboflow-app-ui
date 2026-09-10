@@ -17,12 +17,20 @@ export interface User {
   email: string
   username: string
   role: SystemRole | null
-  first_name: string
-  last_name: string
+  // Nullable — a provisioned-but-not-fully-set-up account (or one created
+  // directly rather than through a flow that requires a name) can genuinely
+  // have neither set. fullName()/initials() in lib/userDisplay.ts already
+  // fall back to the username for exactly this case.
+  first_name: string | null
+  last_name: string | null
   phone: string | null
   avatar_url: string | null
   is_active: boolean
   is_activated: boolean
+  // Which Super Admin provisioned this account (POST /auth/users) — null
+  // for the one bootstrap super_admin who self-registered. Resolve to a
+  // name client-side by looking this id up in the same user list.
+  created_by: string | null
   created_at: string
 }
 

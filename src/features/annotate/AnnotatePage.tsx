@@ -414,6 +414,7 @@ function ActiveJobCard({
   onChanged,
   canManageImages,
   canAnnotate,
+  mode = "annotating",
 }: {
   job: JobSummary
   projectId: string
@@ -421,8 +422,16 @@ function ActiveJobCard({
   onChanged: () => void
   canManageImages: boolean
   canAnnotate: boolean
+  /** "review" jobs are already 100% annotated by definition (that's what
+   *  routed them here) — Annotated/Unannotated would always read "N / 0",
+   *  telling the viewer nothing. Approved/Pending is the number that
+   *  actually matters for a job sitting in the Review column. */
+  mode?: "annotating" | "review"
 }) {
-  const percent = job.total_images === 0 ? 0 : Math.round((job.annotated_count / job.total_images) * 100)
+  const percent =
+    job.total_images === 0
+      ? 0
+      : Math.round(((mode === "review" ? job.approved_count : job.annotated_count) / job.total_images) * 100)
 
   const labelerText =
     job.assignments.length === 0
@@ -503,20 +512,23 @@ function ActiveJobCard({
   return (
     <div className="rounded-lg border border-border p-4">
       <div className="mb-2 flex items-start justify-between gap-2">
-        <p className="text-sm font-medium text-foreground">
-          Uploaded on{" "}
-          {new Date(job.batch_created_at).toLocaleDateString("en-US", {
-            month: "2-digit",
-            day: "2-digit",
-            year: "2-digit",
-          })}{" "}
-          at{" "}
-          {new Date(job.batch_created_at).toLocaleTimeString("en-US", {
-            hour: "numeric",
-            minute: "2-digit",
-            hour12: true,
-          }).toLowerCase()}
-        </p>
+        <div>
+          <p className="text-sm font-medium text-foreground">{job.title}</p>
+          <p className="text-xs text-muted-foreground">
+            Uploaded on{" "}
+            {new Date(job.batch_created_at).toLocaleDateString("en-US", {
+              month: "2-digit",
+              day: "2-digit",
+              year: "2-digit",
+            })}{" "}
+            at{" "}
+            {new Date(job.batch_created_at).toLocaleTimeString("en-US", {
+              hour: "numeric",
+              minute: "2-digit",
+              hour12: true,
+            }).toLowerCase()}
+          </p>
+        </div>
         <DropdownMenu>
           <DropdownMenuTrigger className="shrink-0 text-muted-foreground hover:text-foreground">
             <MoreVertical className="size-4" />
@@ -574,22 +586,45 @@ function ActiveJobCard({
       </p>
       <div className="mb-3 flex items-center gap-1.5 text-xs text-muted-foreground">
         <div className="flex flex-col gap-0.5">
-          <span className="flex items-center gap-1.5">
-            <span
-              className={`size-1.5 rounded-full ${
-                job.annotated_count > 0 ? "bg-brand" : "border border-muted-foreground"
-              }`}
-            />
-            {job.annotated_count} Annotated
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="size-1.5 rounded-full border border-muted-foreground" />
-            {job.unannotated_count} Unannotated
-          </span>
+          {mode === "review" ? (
+            <>
+              <span className="flex items-center gap-1.5">
+                <span
+                  className={`size-1.5 rounded-full ${
+                    job.approved_count > 0 ? "bg-brand" : "border border-muted-foreground"
+                  }`}
+                />
+                {job.approved_count} Approved
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="size-1.5 rounded-full border border-muted-foreground" />
+                {job.pending_review_count} Awaiting Review
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="flex items-center gap-1.5">
+                <span
+                  className={`size-1.5 rounded-full ${
+                    job.annotated_count > 0 ? "bg-brand" : "border border-muted-foreground"
+                  }`}
+                />
+                {job.annotated_count} Annotated
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="size-1.5 rounded-full border border-muted-foreground" />
+                {job.unannotated_count} Unannotated
+              </span>
+            </>
+          )}
         </div>
         <span
           className="shrink-0"
-          title="Annotated = images with at least one label saved. Unannotated = still to do."
+          title={
+            mode === "review"
+              ? "Approved = a reviewer signed off. Awaiting Review = still needs a verdict."
+              : "Annotated = images with at least one label saved. Unannotated = still to do."
+          }
         >
           <Info className="size-3.5" />
         </span>
@@ -600,7 +635,7 @@ function ActiveJobCard({
           to={`/projects/${projectId}/annotate/job/${job.id}`}
           className="text-sm font-medium text-brand hover:underline"
         >
-          {canAnnotate ? "Start Annotating →" : "Review Images →"}
+          {mode === "review" ? "Review Images →" : canAnnotate ? "Start Annotating →" : "Review Images →"}
         </Link>
       </div>
 
@@ -880,6 +915,13 @@ export function AnnotatePage() {
   const [datasetJobs, setDatasetJobs] = useState<JobSummary[]>([])
   const [loading, setLoading] = useState(true)
 
+  // Split the one "annotating" list the backend gives us: a job flips into
+  // the Review column once needs_review says so (fully labeled, something
+  // still awaiting a verdict, project actually has a reviewer) — everything
+  // else (including a project with no reviewer at all) stays in Annotating.
+  const annotatingJobs = activeJobs.filter((j) => !j.needs_review)
+  const reviewJobs = activeJobs.filter((j) => j.needs_review)
+
   function refetch() {
     if (!workspaceId || !projectId) return
     // Promise.all fails closed — one endpoint erroring (e.g. a permissions
@@ -933,7 +975,7 @@ export function AnnotatePage() {
       {loading ? (
         <PageLoader />
       ) : (
-        <div className={`grid grid-cols-1 gap-5 ${canAnnotate ? "lg:grid-cols-3" : "lg:grid-cols-2"}`}>
+        <div className={`grid grid-cols-1 gap-5 ${canAnnotate ? "lg:grid-cols-4" : "lg:grid-cols-3"}`}>
           {/* Unassigned — real batches. Nothing here is actionable for a
               Reviewer (can't annotate yet, can't assign), so it's hidden
               rather than shown as a dead-end empty column. */}
@@ -983,18 +1025,18 @@ export function AnnotatePage() {
                 <ColumnHelp text="Once a batch is assigned to a user for annotation, it will appear as an annotation job here. Moving a job back to unassigned sends its images back to the Unassigned column as a batch." />
               </h2>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                {activeJobs.length} Job{activeJobs.length !== 1 && "s"}
+                {annotatingJobs.length} Job{annotatingJobs.length !== 1 && "s"}
               </p>
             </div>
             <div className="flex flex-1 flex-col gap-3 p-4">
-              {activeJobs.length === 0 ? (
+              {annotatingJobs.length === 0 ? (
                 <div className="flex flex-1 flex-col items-center justify-center gap-3 py-10 text-center">
                   <p className="text-sm text-muted-foreground">
                     Images currently being labeled show up here.
                   </p>
                 </div>
               ) : (
-                activeJobs.map((job) => (
+                annotatingJobs.map((job) => (
                   <ActiveJobCard
                     key={job.id}
                     job={job}
@@ -1003,6 +1045,44 @@ export function AnnotatePage() {
                     onChanged={refetch}
                     canManageImages={canManageImages}
                     canAnnotate={canAnnotate}
+                  />
+                ))
+              )}
+            </div>
+          </div>
+
+          {/* Review — fully-annotated jobs still awaiting a reviewer's
+              verdict. Split out of Annotating so the review backlog is
+              visible project-wide at a glance instead of hiding inside
+              each job's own sidebar. */}
+          <div className="flex flex-col rounded-xl border border-border">
+            <div className="border-b border-border p-4 text-center">
+              <h2 className="flex items-center justify-center gap-1.5 text-base font-semibold text-foreground">
+                Review
+                <ColumnHelp text="Jobs that are fully annotated but still have images awaiting a reviewer's approval or rejection. Once every image is approved, use 'Add to Dataset' to move it to the Dataset column." />
+              </h2>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {reviewJobs.length} Job{reviewJobs.length !== 1 && "s"}
+              </p>
+            </div>
+            <div className="flex flex-1 flex-col gap-3 p-4">
+              {reviewJobs.length === 0 ? (
+                <div className="flex flex-1 flex-col items-center justify-center gap-3 py-10 text-center">
+                  <p className="text-sm text-muted-foreground">
+                    Fully annotated jobs awaiting review show up here.
+                  </p>
+                </div>
+              ) : (
+                reviewJobs.map((job) => (
+                  <ActiveJobCard
+                    key={job.id}
+                    job={job}
+                    projectId={projectId!}
+                    workspaceId={workspaceId!}
+                    onChanged={refetch}
+                    canManageImages={canManageImages}
+                    canAnnotate={canAnnotate}
+                    mode="review"
                   />
                 ))
               )}

@@ -20,6 +20,8 @@ import { InviteMemberDialog } from "@/features/workspace/InviteMemberDialog"
 import { listProjects, listFolders } from "@/lib/projectApi"
 import { getWorkspace, listWorkspaceMembers } from "@/lib/workspaceApi"
 import { useWorkspaceStore } from "@/stores/workspaceStore"
+import { useAuthStore } from "@/stores/authStore"
+import { effectivePermissions } from "@/lib/permissions"
 import { initials } from "@/lib/userDisplay"
 import type { Project, ProjectFolder } from "@/types/project"
 import type { Workspace, WorkspaceMember } from "@/types/workspace"
@@ -28,6 +30,7 @@ type SortOrder = "newest" | "oldest" | "name"
 
 export function ProjectsPage() {
   const workspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
+  const currentUser = useAuthStore((s) => s.user)
   const [workspace, setWorkspace] = useState<Workspace | null>(null)
   const [members, setMembers] = useState<WorkspaceMember[]>([])
   const [folders, setFolders] = useState<ProjectFolder[]>([])
@@ -38,6 +41,27 @@ export function ProjectsPage() {
   const [projectDialogOpen, setProjectDialogOpen] = useState(false)
   const [inviteDialogOpen, setInviteDialogOpen] = useState(false)
   const [sortOrder, setSortOrder] = useState<SortOrder>("newest")
+
+  // Only a super admin, or this specific workspace's own owner, can invite
+  // into it — same rule the backend's invite_member enforces, and the same
+  // one Settings' WorkspaceMembersPage/WorkspaceManagementCard already
+  // follow. This page showed the button to every member regardless of
+  // that, which is exactly how a plain Labeler ended up seeing "Invite
+  // Team to Workspace" on a workspace they don't own.
+  const canManageWorkspace =
+    currentUser?.role === "super_admin" || (!!workspace && workspace.owner_id === currentUser?.id)
+
+  // "New Folder"/"New Project" were showing to EVERY member regardless of
+  // their actual create_project permission — an Admin who's had it
+  // switched off, or a plain Labeler/Reviewer who never had it, saw (and
+  // could click) a button that would just 403 for them. Same
+  // effectivePermissions() the workspace member-permissions editor itself
+  // uses, sourced from this page's own already-fetched member list rather
+  // than a second fetch.
+  const myMembership = members.find((m) => m.user_id === currentUser?.id)
+  const canCreateProjects =
+    currentUser?.role === "super_admin" ||
+    (!!myMembership && effectivePermissions(myMembership.role, myMembership.permission_overrides).create_project)
 
   const sortedProjects = useMemo(() => {
     const sorted = [...projects]
@@ -106,10 +130,12 @@ export function ProjectsPage() {
               </Avatar>
             ))}
           </div>
-          <Button variant="outline" onClick={() => setInviteDialogOpen(true)}>
-            <UserPlus className="size-4" />
-            Invite Team to Workspace
-          </Button>
+          {canManageWorkspace && (
+            <Button variant="outline" onClick={() => setInviteDialogOpen(true)}>
+              <UserPlus className="size-4" />
+              Invite Team to Workspace
+            </Button>
+          )}
         </div>
       </div>
 
@@ -137,14 +163,18 @@ export function ProjectsPage() {
           </Select>
         </div>
         <div className="flex items-center gap-2">
+          {canCreateProjects && (
           <Button variant="outline" onClick={() => setFolderDialogOpen(true)}>
             <FolderPlus className="size-4" />
             New Folder
           </Button>
+          )}
+          {canCreateProjects && (
           <Button variant="brand" onClick={() => setProjectDialogOpen(true)}>
             <Plus className="size-4" />
             New Project
           </Button>
+          )}
         </div>
       </div>
 
@@ -155,7 +185,7 @@ export function ProjectsPage() {
           {folders.length > 0 && (
             <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
               {folders.map((folder) => (
-                <FolderCard key={folder.id} folder={folder} />
+                <FolderCard key={folder.id} folder={folder} workspaceId={workspaceId!} onDeleted={refetch} />
               ))}
             </div>
           )}

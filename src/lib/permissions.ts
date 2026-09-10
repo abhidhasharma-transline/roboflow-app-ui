@@ -1,5 +1,6 @@
 // Mirrors app/core/permissions.py — keep these two files in sync.
 import type { WorkspaceRole } from "@/types/auth"
+import { roleLabel } from "@/lib/userDisplay"
 
 export const PERMISSION_KEYS = [
   "create_project",
@@ -89,4 +90,23 @@ export function grantedPermissions(
 ): PermissionKey[] {
   const effective = effectivePermissions(role, overrides)
   return PERMISSION_KEYS.filter((key) => effective[key])
+}
+
+/** A role's own display name, plus " + Reviewer"/" + Labeler" whenever an
+ *  override has granted the OTHER role's core capability on top of this
+ *  one — e.g. a Labeler who's had "Review Images" switched on for them
+ *  still shows as "Labeler" everywhere else in the app (their role field
+ *  genuinely didn't change), but without this they'd look like a plain
+ *  Labeler even though they can now also review. Admin already has every
+ *  permission by default, so there's never anything extra to add for it. */
+export function roleBadgeLabel(
+  role: WorkspaceRole,
+  overrides: Record<string, boolean> | null | undefined
+): string {
+  const base = roleLabel(role)
+  if (role === "admin") return base
+  const effective = effectivePermissions(role, overrides)
+  if (role === "labeler" && effective.review_images) return `${base} + Reviewer`
+  if (role === "reviewer" && effective.annotate) return `${base} + Labeler`
+  return base
 }

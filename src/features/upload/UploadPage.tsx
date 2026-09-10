@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { useParams, useNavigate } from "react-router-dom"
+import { useParams, useNavigate, Navigate } from "react-router-dom"
 import {
   Upload,
   Image as ImageIcon,
@@ -31,6 +31,7 @@ import { useWorkspaceStore } from "@/stores/workspaceStore"
 import { useToastStore } from "@/stores/toastStore"
 import { useUnsavedUploadStore } from "@/stores/unsavedUploadStore"
 import { useUnsavedUploadGuard } from "@/hooks/useUnsavedUploadGuard"
+import { useProject } from "@/hooks/useProjects"
 import type { UploadImagesResponse } from "@/types/upload"
 
 const VIDEO_EXTENSIONS = /\.(mp4|mov)$/i
@@ -187,6 +188,7 @@ export function UploadPage() {
   const addToast = useToastStore((s) => s.addToast)
   const { pendingBatch, setPendingBatch, clearPendingBatch } = useUnsavedUploadStore()
   useUnsavedUploadGuard()
+  const { project } = useProject(projectId)
 
   const [batchName, setBatchName] = useState(defaultBatchName)
   const [tags, setTags] = useState<string[]>([])
@@ -343,6 +345,16 @@ export function UploadPage() {
   }
 
   const isBusy = stage.kind === "committing" || stage.kind === "video-modal"
+
+  // Sidebar already hides the link into this page without create_batch,
+  // but that alone doesn't stop someone who already has the URL (or just
+  // types it) from landing here directly — the page itself has to refuse
+  // too, not just the door leading to it. Waits for `project` to actually
+  // load before deciding, so this doesn't flash a redirect during the
+  // moment my_permissions is still undefined.
+  if (project && project.my_permissions?.create_batch === false) {
+    return <Navigate to={`/projects/${projectId}/annotate`} replace />
+  }
 
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto p-8">

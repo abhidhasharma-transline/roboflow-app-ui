@@ -1,3 +1,4 @@
+import { useEffect } from "react"
 import { GuardedNavLink as NavLink } from "./GuardedNavLink"
 import {
   Bot,
@@ -15,6 +16,13 @@ import {
 import { cn } from "@/lib/utils"
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher"
+import { useNotificationStore } from "@/stores/notificationStore"
+
+// How often the sidebar re-checks for new notifications on its own — a
+// visit to /notifications (or marking things read there) also refreshes
+// this immediately, this is just the fallback for "something arrived while
+// I was elsewhere in the app."
+const UNREAD_POLL_MS = 60_000
 
 interface NavItem {
   label: string
@@ -42,7 +50,7 @@ const bottomNavItems: NavItem[] = [
   { label: "Settings", icon: Settings, path: "/settings/account" },
 ]
 
-function CollapsedItem({ item }: { item: NavItem }) {
+function CollapsedItem({ item, showDot }: { item: NavItem; showDot?: boolean }) {
   if (item.disabled) {
     return (
       <Tooltip>
@@ -66,12 +74,15 @@ function CollapsedItem({ item }: { item: NavItem }) {
           to={item.path!}
           className={({ isActive }) =>
             cn(
-              "flex size-9 items-center justify-center rounded-md text-sidebar-foreground hover:bg-sidebar-accent",
+              "relative flex size-9 items-center justify-center rounded-md text-sidebar-foreground hover:bg-sidebar-accent",
               isActive && "bg-sidebar-accent text-sidebar-accent-foreground"
             )
           }
         >
           <item.icon className="size-4.5" />
+          {showDot && (
+            <span className="absolute top-1.5 right-1.5 size-2 rounded-full bg-brand ring-2 ring-sidebar" />
+          )}
         </NavLink>
       </TooltipTrigger>
       <TooltipContent side="right">{item.label}</TooltipContent>
@@ -79,7 +90,7 @@ function CollapsedItem({ item }: { item: NavItem }) {
   )
 }
 
-function ExpandedItem({ item }: { item: NavItem }) {
+function ExpandedItem({ item, showDot }: { item: NavItem; showDot?: boolean }) {
   if (item.disabled) {
     return (
       <span
@@ -105,12 +116,22 @@ function ExpandedItem({ item }: { item: NavItem }) {
     >
       <item.icon className="size-4" />
       <span className="flex-1">{item.label}</span>
+      {showDot && <span className="size-2 shrink-0 rounded-full bg-brand" />}
       {item.hasSubmenu && <ChevronRight className="size-3.5" />}
     </NavLink>
   )
 }
 
 export function IconRail({ expanded }: { expanded: boolean }) {
+  const unreadCount = useNotificationStore((s) => s.unreadCount)
+  const refetchUnreadCount = useNotificationStore((s) => s.refetchUnreadCount)
+
+  useEffect(() => {
+    refetchUnreadCount()
+    const interval = setInterval(refetchUnreadCount, UNREAD_POLL_MS)
+    return () => clearInterval(interval)
+  }, [refetchUnreadCount])
+
   if (!expanded) {
     // Collapsed: icon-only rail, used once you're inside a project.
     // No logo here (it lives in the global Topbar now) and no user
@@ -129,7 +150,7 @@ export function IconRail({ expanded }: { expanded: boolean }) {
 
         <nav className="mt-auto flex flex-col items-center gap-1">
           {bottomNavItems.map((item) => (
-            <CollapsedItem key={item.label} item={item} />
+            <CollapsedItem key={item.label} item={item} showDot={item.label === "Notifications" && unreadCount > 0} />
           ))}
         </nav>
       </aside>
@@ -151,7 +172,7 @@ export function IconRail({ expanded }: { expanded: boolean }) {
 
       <nav className="mt-auto flex flex-col gap-0.5 px-3 py-3">
         {bottomNavItems.map((item) => (
-          <ExpandedItem key={item.label} item={item} />
+          <ExpandedItem key={item.label} item={item} showDot={item.label === "Notifications" && unreadCount > 0} />
         ))}
       </nav>
     </aside>

@@ -7,6 +7,8 @@ import {
   Trash2,
   Activity,
   ShieldCheck,
+  Loader2,
+  AlertTriangle,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -207,7 +209,16 @@ export function VersionDetailView({
           </button>
         )}
         <div className="flex shrink-0 gap-2">
-          <Button variant="outline" onClick={() => setDownloadDialogOpen(true)}>
+          <Button
+            variant="outline"
+            onClick={() => setDownloadDialogOpen(true)}
+            disabled={version.augmentation_status === "pending" || version.augmentation_status === "processing"}
+            title={
+              version.augmentation_status === "pending" || version.augmentation_status === "processing"
+                ? "Still generating augmented images — try again in a moment"
+                : undefined
+            }
+          >
             <Download className="size-4" />
             Download Dataset
           </Button>
@@ -217,6 +228,25 @@ export function VersionDetailView({
           </Button>
         </div>
       </div>
+
+      {(version.augmentation_status === "pending" || version.augmentation_status === "processing") && (
+        <div className="mb-4 flex items-center gap-2.5 rounded-lg border-l-4 border-brand bg-muted p-3 text-sm">
+          <Loader2 className="size-4 shrink-0 animate-spin text-brand" />
+          <p className="text-foreground">
+            Generating augmented Train images… {version.augmentation_progress}%. The counts and images below will
+            update once this finishes — Download is disabled until then.
+          </p>
+        </div>
+      )}
+      {version.augmentation_status === "failed" && (
+        <div className="mb-4 flex items-center gap-2.5 rounded-lg border-l-4 border-destructive bg-muted p-3 text-sm">
+          <AlertTriangle className="size-4 shrink-0 text-destructive" />
+          <p className="text-foreground">
+            Generating augmented Train images failed. The counts below don't include augmentation yet — try
+            recreating this version.
+          </p>
+        </div>
+      )}
 
       <p className="mb-6 flex items-center gap-1.5 text-sm text-muted-foreground">
         By

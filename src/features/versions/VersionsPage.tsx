@@ -127,9 +127,14 @@ export function VersionsPage() {
   const [loadingSource, setLoadingSource] = useState(true)
   const [rebalanceDialogOpen, setRebalanceDialogOpen] = useState(false)
 
+  // No resize by default — the FIRST version a project ever creates should
+  // capture images at their real, native resolution unless someone
+  // explicitly opts into downsizing. A hardcoded 640x512 here (or in
+  // resetVersionWizard below) meant every brand-new project's first version
+  // silently downsampled regardless of what the source images actually were.
   const [preprocessing, setPreprocessing] = useState<PreprocessingConfig>({
     auto_orient: true,
-    resize: { mode: "stretch", width: 640, height: 512 },
+    resize: null,
   })
   const [autoOrientOpen, setAutoOrientOpen] = useState(false)
   const [resizeOpen, setResizeOpen] = useState(false)
@@ -207,6 +212,19 @@ export function VersionsPage() {
   useEffect(refetchVersions, [workspaceId, projectId])
   useEffect(refetchSource, [workspaceId, projectId])
 
+  // While any version is still generating its augmented images in the
+  // background, poll for updates — this is the only way the "Generating…"
+  // banner (VersionDetailView) and the Download button's disabled state
+  // ever find out the job finished, short of a manual page refresh.
+  const isGenerating = versions.some((v) => v.augmentation_status === "pending" || v.augmentation_status === "processing")
+  useEffect(() => {
+    if (!isGenerating || !workspaceId || !projectId) return
+    const interval = setInterval(() => {
+      listVersions(workspaceId, projectId).then(setVersions).catch(() => {})
+    }, 3000)
+    return () => clearInterval(interval)
+  }, [isGenerating, workspaceId, projectId])
+
   // Full reset for the wizard — called whenever "Create New Version" is
   // clicked, so re-clicking it always lands on a visibly fresh step 1
   // instead of silently reusing whatever step/name was left over from a
@@ -227,10 +245,20 @@ export function VersionsPage() {
     // choices that don't default to "on" just because a previous version
     // happened to use them; each new version starts without them, same as
     // before this change.
-    const previousResize = existingVersions[0]?.preprocessing?.resize
+    //
+    // The very first version a project ever creates has no prior version to
+    // inherit from, so it defaults to no resize at all (native resolution) —
+    // NOT a hardcoded 640x512. And when a prior version DID exist but had
+    // resize turned off, that's a real, intentional choice to carry
+    // forward too: `?? {640x512}` here would have quietly reintroduced a
+    // resize the person had deliberately removed, since `null` (off) and
+    // `undefined` (no prior version at all) both pass a bare `??` check.
+    const previousResize = existingVersions.length > 0
+      ? (existingVersions[0]?.preprocessing?.resize ?? null)
+      : null
     setPreprocessing({
       auto_orient: true,
-      resize: previousResize ?? { mode: "stretch", width: 640, height: 512 },
+      resize: previousResize,
     })
     setAugmentations({})
   }
@@ -320,6 +348,11 @@ export function VersionsPage() {
                   <p className="mt-1 text-xs text-muted-foreground">
                     {v.image_count} image{v.image_count !== 1 && "s"} · {v.class_count} class{v.class_count !== 1 && "es"}
                   </p>
+                  {(v.augmentation_status === "pending" || v.augmentation_status === "processing") && (
+                    <p className="mt-1 text-xs font-medium text-brand">
+                      Generating… {v.augmentation_progress}%
+                    </p>
+                  )}
                 </button>
               ))}
             </div>
@@ -519,8 +552,8 @@ export function VersionsPage() {
                 <div className="mt-3">
                   <p className="mb-3 text-sm text-muted-foreground">
                     Decrease training time and increase performance by applying image transformations to all images
-                    in this dataset. These settings are saved with the version but not yet applied to the actual
-                    image files — real pixel processing isn't wired up.
+                    in this dataset. These settings are saved with the version now, and applied for real when you
+                    export it — image previews here and elsewhere in the app still show the originals, unchanged.
                   </p>
                   <div className="mb-4 divide-y divide-border rounded-lg border border-border">
                     {preprocessing.auto_orient && (
@@ -777,9 +810,15 @@ export function VersionsPage() {
         thumbnailUrl={previewImages[0]?.thumbnail_url ?? null}
         onSelect={(id) => {
           // Grayscale is a plain on/off toggle — nothing to configure.
-          // Auto-Contrast and Random Sample each have real sub-options
-          // (algorithm type; per-split percentages), so picking either tile
-          // opens its own dialog instead of just flipping a boolean.
+          // Resize, Auto-Contrast, and Random Sample each need real
+          // configuration (dimensions/mode; algorithm type; per-split
+          // percentages), so picking any of those tiles opens its own
+          // dialog — same flow as editing it once it's already added —
+          // instead of just flipping a boolean with no values behind it.
+          if (id === "resize") {
+            setResizeOpen(true)
+            return
+          }
           if (id === "auto_contrast") {
             setAutoContrastOpen(true)
             return

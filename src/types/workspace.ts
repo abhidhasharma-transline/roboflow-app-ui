@@ -7,6 +7,10 @@ export interface Workspace {
   slug: string
   owner_id: string
   is_active: boolean
+  // The one workspace every account gets automatically at activation — it
+  // can't be deleted by anyone, super admin included (see delete_workspace
+  // on the backend), so the Delete action should never be offered for one.
+  is_personal: boolean
   created_at: string
 }
 
@@ -20,6 +24,10 @@ export interface WorkspaceMember {
   role: WorkspaceRole
   permission_overrides: Record<string, boolean> | null
   has_full_project_access: boolean
+  // True when this member is a system-level super admin — their stored
+  // workspace role/has_full_project_access are vestigial and never actually
+  // consulted, since super admin bypasses every permission check outright.
+  is_super_admin: boolean
   joined_at: string
 }
 

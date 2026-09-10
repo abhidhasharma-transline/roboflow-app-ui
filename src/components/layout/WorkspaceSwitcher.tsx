@@ -106,11 +106,15 @@ export function WorkspaceSwitcher({ collapsed }: { collapsed?: boolean }) {
             </DropdownMenuItem>
           ))
         )}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => setCreateOpen(true)}>
-          <Plus className="size-3.5" />
-          Create Workspace
-        </DropdownMenuItem>
+        {user?.role === "super_admin" && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => setCreateOpen(true)}>
+              <Plus className="size-3.5" />
+              Create Workspace
+            </DropdownMenuItem>
+          </>
+        )}
       </DropdownMenuContent>
 
       <CreateWorkspaceDialog

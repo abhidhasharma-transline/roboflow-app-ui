@@ -121,10 +121,15 @@ export function ProjectSidebar() {
   // browsing before project access resolves) — only an explicit `false`
   // narrows either flag.
   const canAnnotate = project?.my_permissions?.annotate !== false
-  const canManageImages = project?.my_permissions?.label_images !== false
+  // Deliberately keyed on create_batch, NOT label_images — uploading new
+  // data and labeling existing images are separately toggleable
+  // permissions (see app/upload/route.py's _check_can_manage_images),
+  // so someone allowed to label but explicitly denied create_batch must
+  // not see a working link into the upload flow.
+  const canUploadData = project?.my_permissions?.create_batch !== false
 
   const dataItems: SubNavItem[] = [
-    ...(canManageImages
+    ...(canUploadData
       ? [{ label: "Upload Data", icon: Upload, path: `/projects/${projectId}/upload` }]
       : []),
     { label: canAnnotate ? "Annotate" : "Review", icon: ImageIcon, path: `/projects/${projectId}/annotate` },

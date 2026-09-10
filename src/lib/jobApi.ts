@@ -128,9 +128,16 @@ export async function createJob(
 export async function getJob(
   workspaceId: string,
   projectId: string,
-  jobId: string
+  jobId: string,
+  assignedTo?: string,
+  /** Narrows the counts to one reviewer's exclusive review slice — ignored
+   *  server-side for a Reviewer caller, whose own query is already forced
+   *  to their own id regardless of this param. */
+  reviewerId?: string
 ): Promise<JobDetail> {
-  const res = await api.get<JobDetail>(`${jobsBase(workspaceId, projectId)}/${jobId}`)
+  const res = await api.get<JobDetail>(`${jobsBase(workspaceId, projectId)}/${jobId}`, {
+    params: assignedTo || reviewerId ? { assigned_to: assignedTo, reviewer_id: reviewerId } : undefined,
+  })
   return res.data
 }
 
@@ -145,11 +152,14 @@ export async function getJobImages(
   /** Narrows a shared job's full image list to one labeler's slice — ignored
    *  server-side for a Labeler caller, whose own query is already forced to
    *  their own id regardless of this param. */
-  assignedTo?: string
+  assignedTo?: string,
+  /** Same idea, but for narrowing tab="annotated" to one reviewer's
+   *  exclusive slice — ignored server-side for a Reviewer caller. */
+  reviewerId?: string
 ): Promise<{ total: number; images: JobImageSummary[] }> {
   const res = await api.get<{ total: number; images: JobImageSummary[] }>(
     `${jobsBase(workspaceId, projectId)}/${jobId}/images`,
-    { params: { tab, review, assigned_to: assignedTo, ...paging } }
+    { params: { tab, review, assigned_to: assignedTo, reviewer_id: reviewerId, ...paging } }
   )
   return res.data
 }

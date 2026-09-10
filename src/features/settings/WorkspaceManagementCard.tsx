@@ -1,12 +1,24 @@
 import { useEffect, useState } from "react"
-import { Boxes, ShieldCheck, UserPlus } from "lucide-react"
+import { useNavigate } from "react-router-dom"
+import { Boxes, ShieldCheck, UserPlus, Trash2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog"
 import { useAuthStore } from "@/stores/authStore"
-import { listWorkspaceMembers, updateWorkspaceMember } from "@/lib/workspaceApi"
+import { useWorkspaceStore } from "@/stores/workspaceStore"
+import { useToastStore } from "@/stores/toastStore"
+import { listWorkspaceMembers, updateWorkspaceMember, deleteWorkspace } from "@/lib/workspaceApi"
 import { listProjectMembers } from "@/lib/projectApi"
 import { useProjects } from "@/hooks/useProjects"
+import { extractErrorMessage } from "@/lib/utils"
 import { InviteMemberDialog } from "@/features/workspace/InviteMemberDialog"
 import { MemberRow, type ProjectOverride } from "./MemberRow"
 import type { Workspace, WorkspaceMember } from "@/types/workspace"
@@ -14,10 +26,14 @@ import type { WorkspaceRole } from "@/types/auth"
 
 interface WorkspaceManagementCardProps {
   workspace: Workspace
+  onDeleted: (workspaceId: string) => void
 }
 
-export function WorkspaceManagementCard({ workspace }: WorkspaceManagementCardProps) {
+export function WorkspaceManagementCard({ workspace, onDeleted }: WorkspaceManagementCardProps) {
+  const navigate = useNavigate()
   const currentUser = useAuthStore((s) => s.user)
+  const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace)
+  const addToast = useToastStore((s) => s.addToast)
   const isSuperAdmin = currentUser?.role === "super_admin"
   const canManage = isSuperAdmin || workspace.owner_id === currentUser?.id
 
@@ -26,6 +42,27 @@ export function WorkspaceManagementCard({ workspace }: WorkspaceManagementCardPr
   const [overridesByUser, setOverridesByUser] = useState<Record<string, ProjectOverride[]>>({})
   const [isLoading, setIsLoading] = useState(true)
   const [inviteOpen, setInviteOpen] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+
+  function openWorkspace() {
+    setActiveWorkspace(workspace.id, workspace.name)
+    navigate("/projects")
+  }
+
+  async function handleDelete() {
+    setDeleting(true)
+    try {
+      await deleteWorkspace(workspace.id)
+      addToast({ variant: "success", title: "Workspace deleted", description: workspace.name })
+      setDeleteOpen(false)
+      onDeleted(workspace.id)
+    } catch (err) {
+      addToast({ variant: "error", title: "Couldn't delete workspace", description: extractErrorMessage(err) })
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   function refetchMembers() {
     setIsLoading(true)
@@ -75,7 +112,13 @@ export function WorkspaceManagementCard({ workspace }: WorkspaceManagementCardPr
       <CardContent className="flex flex-col gap-4">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <h2 className="text-base font-semibold text-foreground">{workspace.name}</h2>
+            <button
+              onClick={openWorkspace}
+              className="text-base font-semibold text-foreground hover:text-brand hover:underline"
+              title="Open this workspace"
+            >
+              {workspace.name}
+            </button>
             <span className="flex items-center gap-1 text-xs text-muted-foreground">
               <Boxes className="size-3.5" />
               {projects.length} project{projects.length !== 1 && "s"}
@@ -94,10 +137,22 @@ export function WorkspaceManagementCard({ workspace }: WorkspaceManagementCardPr
                 Invite members
               </Button>
             )}
+            {canManage && !workspace.is_personal && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="text-muted-foreground hover:text-destructive"
+                onClick={() => setDeleteOpen(true)}
+                title="Delete workspace"
+                aria-label={`Delete ${workspace.name}`}
+              >
+                <Trash2 className="size-3.5" />
+              </Button>
+            )}
           </div>
         </div>
 
-        {isLoading ? (
+        {isLoading && members.length === 0 ? (
           <p className="text-sm text-muted-foreground">Loading members…</p>
         ) : members.length === 0 ? (
           <p className="text-sm text-muted-foreground">
@@ -119,7 +174,6 @@ export function WorkspaceManagementCard({ workspace }: WorkspaceManagementCardPr
                 allProjects={projects}
                 canManage={canManage}
                 isSelf={member.user_id === currentUser?.id}
-                selfIsSuperAdmin={member.user_id === currentUser?.id && isSuperAdmin}
                 isOwner={member.user_id === workspace.owner_id}
                 onRoleChange={handleRoleChange}
                 onRefetchOverrides={refetchOverrides}
@@ -136,6 +190,26 @@ export function WorkspaceManagementCard({ workspace }: WorkspaceManagementCardPr
         onOpenChange={setInviteOpen}
         onInvited={refetchMembers}
       />
+
+      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete "{workspace.name}"?</DialogTitle>
+            <DialogDescription>
+              This permanently deletes every project in this workspace — their images, videos,
+              and annotations included. Nothing is kept. This can't be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteOpen(false)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDelete} disabled={deleting}>
+              {deleting ? "Deleting…" : "Delete workspace"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   )
 }
