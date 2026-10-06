@@ -1,5 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react"
-import { Search, Plus, X } from "lucide-react"
+import { useNavigate } from "react-router-dom"
+import { Search, Plus, X, UserPlus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -50,6 +51,7 @@ function AddTeamMemberDialog({
   existingLabelerIds: string[]
   onAdded: () => void
 }) {
+  const navigate = useNavigate()
   const [members, setMembers] = useState<WorkspaceMember[]>([])
   const [search, setSearch] = useState("")
   const [addingId, setAddingId] = useState<string | null>(null)
@@ -64,6 +66,11 @@ function AddTeamMemberDialog({
       !existingLabelerIds.includes(m.user_id) &&
       `${fullName(m)} ${m.email}`.toLowerCase().includes(search.toLowerCase())
   )
+  // Only this dialog's own account is in the workspace — there's genuinely
+  // no one else to pick, as opposed to "your search matched nobody." Made
+  // this its own case because otherwise it just looks like the feature is
+  // broken rather than "invite someone to the workspace first."
+  const workspaceHasNoOneElse = members.length <= 1 && !search
 
   async function handleAdd(userId: string) {
     setAddingId(userId)
@@ -81,21 +88,41 @@ function AddTeamMemberDialog({
         <DialogHeader>
           <DialogTitle>Add a labeler from your workspace</DialogTitle>
           <DialogDescription>
-            Anyone in your workspace can be added as a labeler for this project.
+            This only picks from people already in your workspace — it doesn't invite anyone new. Not
+            listed below? Invite them to the workspace first, then come back here.
           </DialogDescription>
         </DialogHeader>
-        <div className="relative">
-          <Search className="absolute top-2.5 left-2.5 size-4 text-muted-foreground" />
-          <Input
-            placeholder="Search workspace members…"
-            className="pl-8"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            autoFocus
-          />
-        </div>
+        {!workspaceHasNoOneElse && (
+          <div className="relative">
+            <Search className="absolute top-2.5 left-2.5 size-4 text-muted-foreground" />
+            <Input
+              placeholder="Search workspace members…"
+              className="pl-8"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              autoFocus
+            />
+          </div>
+        )}
         <div className="flex max-h-72 flex-col gap-1 overflow-y-auto">
-          {candidates.length === 0 ? (
+          {workspaceHasNoOneElse ? (
+            <div className="flex flex-col items-center gap-3 py-6 text-center">
+              <p className="text-sm text-muted-foreground">
+                You're currently the only member of this workspace — there's no one else to add yet.
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  onOpenChange(false)
+                  navigate(`/settings/workspaces/${workspaceId}/members`)
+                }}
+              >
+                <UserPlus className="size-3.5" />
+                Invite people to this workspace
+              </Button>
+            </div>
+          ) : candidates.length === 0 ? (
             <p className="py-6 text-center text-sm text-muted-foreground">No matching members.</p>
           ) : (
             candidates.map((m) => (

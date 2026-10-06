@@ -17,7 +17,7 @@ import { CreateWorkspaceDialog } from "./CreateWorkspaceDialog"
 export function WorkspaceSwitcher({ collapsed }: { collapsed?: boolean }) {
   const navigate = useNavigate()
   const user = useAuthStore((s) => s.user)
-  const { activeWorkspaceId, activeWorkspaceName, setActiveWorkspace } = useWorkspaceStore()
+  const { activeWorkspaceId, activeWorkspaceName, setActiveWorkspace, workspacesVersion } = useWorkspaceStore()
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [createOpen, setCreateOpen] = useState(false)
 
@@ -52,7 +52,7 @@ export function WorkspaceSwitcher({ collapsed }: { collapsed?: boolean }) {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [workspacesVersion])
 
   // Belt-and-suspenders: if the store's cached name is missing for any
   // reason, fall back to whatever this component's own fetch found.

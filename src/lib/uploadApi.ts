@@ -13,6 +13,18 @@ function uploadBase(workspaceId: string, projectId: string) {
   return `/workspaces/${workspaceId}/projects/${projectId}/upload`
 }
 
+// A "Select Folder" pick carries each file's folder-relative path on
+// webkitRelativePath (e.g. "myset/train/images/foo.jpg") separately from
+// its plain `.name` — FormData.append(field, file) sends only `.name` by
+// default, silently dropping that structure. Passing it explicitly as the
+// 3rd arg is what lets the backend recognize a train/valid/test folder
+// layout for split detection (see app/upload/service.py); falls back to
+// the plain name for "Select Files", which never has a relative path.
+function appendFile(form: FormData, field: string, file: File) {
+  const relPath = (file as File & { webkitRelativePath?: string }).webkitRelativePath
+  form.append(field, file, relPath || file.name)
+}
+
 /** POST /upload/images — handles both "Select Files" and "Select Folder". */
 export async function uploadImages(
   workspaceId: string,
@@ -22,8 +34,8 @@ export async function uploadImages(
   onProgress?: (percent: number) => void
 ): Promise<UploadImagesResponse> {
   const form = new FormData()
-  files.forEach((file) => form.append("files", file))
-  ;(opts.labelFiles ?? []).forEach((file) => form.append("label_files", file))
+  files.forEach((file) => appendFile(form, "files", file))
+  ;(opts.labelFiles ?? []).forEach((file) => appendFile(form, "label_files", file))
   form.append("batch_name", opts.batchName)
   form.append("tag_names", opts.tagNames.join(","))
   form.append("folder_name", opts.folderName ?? "")
@@ -79,6 +91,7 @@ export async function uploadImagesChunked(
   const duplicateFilenames: string[] = []
   let imagesAnnotated = 0
   let annotationsImported = 0
+  const splitCounts: UploadImagesResponse["split_counts"] = { train: 0, valid: 0, test: 0, unassigned: 0 }
   const errors: UploadImagesResponse["errors"] = []
   let completedFiles = 0
   const totalFiles = files.length || 1
@@ -122,6 +135,10 @@ export async function uploadImagesChunked(
     duplicateFilenames.push(...res.duplicate_filenames)
     imagesAnnotated += res.images_annotated
     annotationsImported += res.annotations_imported
+    splitCounts.train += res.split_counts.train
+    splitCounts.valid += res.split_counts.valid
+    splitCounts.test += res.split_counts.test
+    splitCounts.unassigned += res.split_counts.unassigned
     errors.push(...res.errors)
     completedFiles += chunk.length
   }
@@ -129,7 +146,7 @@ export async function uploadImagesChunked(
   return {
     batch_id: batchId, batch_name: batchName, source_type: sourceType,
     saved, duplicates, duplicate_filenames: duplicateFilenames, errors, total: saved + duplicates,
-    images_annotated: imagesAnnotated, annotations_imported: annotationsImported,
+    images_annotated: imagesAnnotated, annotations_imported: annotationsImported, split_counts: splitCounts,
   }
 }
 
@@ -240,6 +257,22 @@ export async function fetchBatchPreview(
   return res.data
 }
 
+export type SplitMethod = "existing" | "split" | "all_train" | "all_valid" | "all_test"
+
+/** POST /upload/batch/{id}/apply-split — the "How should we split these
+ *  images?" confirmation's Continue action. "existing" (the default,
+ *  pre-selected whenever a split was actually detected) is a no-op re-save
+ *  of what upload-time detection already set; the other methods overwrite it. */
+export async function applyBatchSplit(
+  workspaceId: string,
+  projectId: string,
+  batchId: string,
+  method: SplitMethod
+): Promise<{ split_counts: { train: number; valid: number; test: number } }> {
+  const res = await api.post(`${uploadBase(workspaceId, projectId)}/batch/${batchId}/apply-split`, { method })
+  return res.data
+}
+
 /** POST /upload/batch/{id}/save — "Save and Continue", finalizes name + tags. */
 export async function saveBatch(
   workspaceId: string,
@@ -266,8 +299,8 @@ export async function appendImagesToBatch(
   labelFiles?: File[]
 ): Promise<UploadImagesResponse> {
   const form = new FormData()
-  files.forEach((file) => form.append("files", file))
-  ;(labelFiles ?? []).forEach((file) => form.append("label_files", file))
+  files.forEach((file) => appendFile(form, "files", file))
+  ;(labelFiles ?? []).forEach((file) => appendFile(form, "label_files", file))
   form.append("folder_name", folderName ?? "")
 
   const res = await api.post<UploadImagesResponse>(

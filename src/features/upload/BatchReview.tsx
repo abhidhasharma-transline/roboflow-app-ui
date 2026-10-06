@@ -7,7 +7,16 @@ import {
   appendImagesToBatch,
   saveBatch,
 } from "@/lib/uploadApi"
+import { useToastStore } from "@/stores/toastStore"
+import { listClasses, type ProjectClass } from "@/lib/classApi"
+import { SplitConfirmDialog } from "./SplitConfirmDialog"
 import type { BatchPreviewResponse, BatchPreviewTab, BatchPreviewImage } from "@/types/upload"
+
+// Same split UploadPage.tsx's initial "selected" stage does — a folder
+// added here (more images for a batch already in review) can carry its own
+// matching .txt/.yaml labels too, so those need pulling out of `files`
+// before upload the same way, not just at the very first step.
+const LABEL_EXTENSIONS = /\.(txt|yaml|yml)$/i
 
 interface BatchReviewProps {
   workspaceId: string
@@ -15,7 +24,7 @@ interface BatchReviewProps {
   batchId: string
   batchName: string
   tags: string[]
-  onSaved: () => void
+  onSaved: (autoJobId: string | null) => void
 }
 
 const TABS: { key: BatchPreviewTab; label: string }[] = [
@@ -67,6 +76,18 @@ export function BatchReview({
   const [adding, setAdding] = useState<{ percent: number; label: string } | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [splitConfirmOpen, setSplitConfirmOpen] = useState(false)
+  const addToast = useToastStore((s) => s.addToast)
+  // Surfaces what a YOLO label import actually created — a labeler asking
+  // "did the classes come in right, with the right names against the right
+  // index?" had no way to check that here short of leaving this screen for
+  // the project's own Classes & Tags page.
+  const [classes, setClasses] = useState<ProjectClass[]>([])
+
+  function refreshClasses() {
+    listClasses(workspaceId, projectId).then(setClasses).catch(() => {})
+  }
+  useEffect(refreshClasses, [workspaceId, projectId])
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const folderInputRef = useRef<HTMLInputElement>(null)
@@ -144,19 +165,30 @@ export function BatchReview({
   }, [tab, images.length])
 
   async function handleAddFiles(fileList: FileList, folderName?: string) {
-    const files = Array.from(fileList)
+    const allFiles = Array.from(fileList)
+    const labelFiles = allFiles.filter((f) => LABEL_EXTENSIONS.test(f.name))
+    const files = allFiles.filter((f) => !LABEL_EXTENSIONS.test(f.name))
     if (files.length === 0) return
     setAdding({ percent: 0, label: `Processing files…` })
     try {
-      await appendImagesToBatch(
+      const res = await appendImagesToBatch(
         workspaceId,
         projectId,
         batchId,
         files,
         folderName,
-        (percent) => setAdding({ percent, label: `Processing files…` })
+        (percent) => setAdding({ percent, label: `Processing files…` }),
+        labelFiles
       )
+      if (res.annotations_imported > 0) {
+        addToast({
+          variant: "success",
+          title: "Annotations imported",
+          description: `${res.annotations_imported} box${res.annotations_imported !== 1 ? "es" : ""} across ${res.images_annotated} image${res.images_annotated !== 1 ? "s" : ""}, from the label files in this upload.`,
+        })
+      }
       await refresh()
+      if (res.annotations_imported > 0) refreshClasses()
     } catch {
       setError("Some files couldn't be added — try again.")
     } finally {
@@ -164,12 +196,33 @@ export function BatchReview({
     }
   }
 
+  // "Save and Continue" only interrupts itself with the split-confirmation
+  // step when there's actually something detected to confirm — a plain
+  // image upload with no folder structure has nothing to show here and
+  // goes straight through, matching Roboflow's own upload flow.
+  function handleSaveClick() {
+    const counts = preview?.split_counts
+    const hasDetectedSplit = !!counts && counts.train + counts.valid + counts.test > 0
+    if (hasDetectedSplit) {
+      setSplitConfirmOpen(true)
+    } else {
+      handleSave()
+    }
+  }
+
   async function handleSave() {
     setSaving(true)
     setError(null)
     try {
-      await saveBatch(workspaceId, projectId, batchId, batchName, tags)
-      onSaved()
+      const res = await saveBatch(workspaceId, projectId, batchId, batchName, tags)
+      if (res.auto_job_id) {
+        addToast({
+          variant: "success",
+          title: "Already-annotated images moved to Annotating",
+          description: "They came in with matching labels, so there's nothing left to label — no manual assignment needed.",
+        })
+      }
+      onSaved(res.auto_job_id)
     } catch {
       setError("Couldn't save the batch — try again.")
       setSaving(false)
@@ -187,6 +240,44 @@ export function BatchReview({
 
   return (
     <div>
+      {(classes.length > 0 || tags.length > 0) && (
+        <div className="mb-4 flex flex-col gap-3 rounded-lg border border-border bg-muted/20 p-3">
+          {classes.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-medium text-muted-foreground">
+                Classes in this project ({classes.length}):
+              </span>
+              {classes.map((c) => (
+                <span
+                  key={c.id}
+                  className="flex items-center gap-1.5 rounded-full border border-border bg-background px-2 py-0.5 text-xs text-foreground"
+                  title={`Class index ${c.class_index} · ${c.annotation_count} annotation${c.annotation_count !== 1 ? "s" : ""}`}
+                >
+                  <span className="size-2 rounded-full" style={{ backgroundColor: c.color }} />
+                  {c.name}
+                  <span className="text-muted-foreground">#{c.class_index}</span>
+                </span>
+              ))}
+            </div>
+          )}
+          {tags.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-medium text-muted-foreground">
+                Tags applied to this batch ({tags.length}):
+              </span>
+              {tags.map((t) => (
+                <span
+                  key={t}
+                  className="rounded-full border border-border bg-background px-2 py-0.5 text-xs text-foreground"
+                >
+                  {t}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="mb-4 flex items-center justify-between border-b border-border">
         <div className="flex items-center gap-6">
           {TABS.map((t) => (
@@ -241,7 +332,7 @@ export function BatchReview({
             </Button>
             <Button
               variant="brand"
-              onClick={handleSave}
+              onClick={handleSaveClick}
               disabled={saving || preview?.counts.all === 0}
               title={preview?.counts.all === 0 ? "There's nothing in this batch to save" : undefined}
             >
@@ -252,7 +343,10 @@ export function BatchReview({
             ref={fileInputRef}
             type="file"
             multiple
-            accept="image/jpeg,image/png,image/bmp,image/webp,image/avif"
+            // See UploadPage.tsx's own fileInputRef for why label extensions
+            // are listed here too — without them the OS picker hid .txt/
+            // .yaml files from a manual multi-select entirely.
+            accept="image/jpeg,image/png,image/bmp,image/webp,image/avif,.txt,.yaml,.yml"
             className="hidden"
             onChange={(e) => e.target.files && handleAddFiles(e.target.files)}
           />
@@ -290,7 +384,10 @@ export function BatchReview({
                   <div className="aspect-[4/3] overflow-hidden rounded-md border border-border bg-muted">
                     <Thumb img={img} />
                   </div>
-                  <p className="truncate text-xs text-muted-foreground" title={img.filename}>
+                  <p
+                    className="line-clamp-2 break-all text-xs leading-snug text-muted-foreground"
+                    title={img.filename}
+                  >
                     {img.filename}
                   </p>
                 </div>
@@ -311,6 +408,21 @@ export function BatchReview({
       </div>
 
       {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
+
+      {preview && (
+        <SplitConfirmDialog
+          workspaceId={workspaceId}
+          projectId={projectId}
+          batchId={batchId}
+          splitCounts={preview.split_counts}
+          open={splitConfirmOpen}
+          onOpenChange={setSplitConfirmOpen}
+          onContinue={() => {
+            setSplitConfirmOpen(false)
+            handleSave()
+          }}
+        />
+      )}
     </div>
   )
 }

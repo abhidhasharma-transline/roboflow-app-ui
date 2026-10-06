@@ -33,6 +33,9 @@ export function WorkspaceManagementCard({ workspace, onDeleted }: WorkspaceManag
   const navigate = useNavigate()
   const currentUser = useAuthStore((s) => s.user)
   const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace)
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
+  const resetActiveWorkspace = useWorkspaceStore((s) => s.reset)
+  const bumpWorkspacesVersion = useWorkspaceStore((s) => s.bumpWorkspacesVersion)
   const addToast = useToastStore((s) => s.addToast)
   const isSuperAdmin = currentUser?.role === "super_admin"
   const canManage = isSuperAdmin || workspace.owner_id === currentUser?.id
@@ -56,6 +59,13 @@ export function WorkspaceManagementCard({ workspace, onDeleted }: WorkspaceManag
       await deleteWorkspace(workspace.id)
       addToast({ variant: "success", title: "Workspace deleted", description: workspace.name })
       setDeleteOpen(false)
+      // If this was the workspace the sidebar is currently sitting in,
+      // clear it — otherwise the app kept treating a now-deleted workspace
+      // as "active" until a hard refresh. bumpWorkspacesVersion separately
+      // makes the sidebar's own workspace switcher drop it from its list,
+      // whether or not it was the active one.
+      if (workspace.id === activeWorkspaceId) resetActiveWorkspace()
+      bumpWorkspacesVersion()
       onDeleted(workspace.id)
     } catch (err) {
       addToast({ variant: "error", title: "Couldn't delete workspace", description: extractErrorMessage(err) })

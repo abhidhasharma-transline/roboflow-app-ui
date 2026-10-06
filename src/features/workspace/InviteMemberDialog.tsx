@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { inviteWorkspaceMember } from "@/lib/workspaceApi"
+import { lookupUserByEmail } from "@/lib/authApi"
 import { useAuthStore } from "@/stores/authStore"
 import { MemberAccessFields } from "./MemberAccessFields"
 import { effectivePermissions, type PermissionKey } from "@/lib/permissions"
@@ -27,6 +28,7 @@ interface InviteMemberDialogProps {
 interface InviteDraft {
   id: string
   email: string
+  name: string | null
   role: WorkspaceRole
   permissions: Record<PermissionKey, boolean>
   fullAccess: boolean
@@ -34,10 +36,11 @@ interface InviteDraft {
   expanded: boolean
 }
 
-function makeDraft(email: string): InviteDraft {
+function makeDraft(email: string, name: string | null): InviteDraft {
   return {
     id: crypto.randomUUID(),
     email,
+    name,
     role: "labeler",
     permissions: effectivePermissions("labeler", null),
     fullAccess: true,
@@ -61,6 +64,7 @@ export function InviteMemberDialog({
   const currentUser = useAuthStore((s) => s.user)
   const [emailDraft, setEmailDraft] = useState("")
   const [emailError, setEmailError] = useState<string | null>(null)
+  const [isChecking, setIsChecking] = useState(false)
   const [drafts, setDrafts] = useState<InviteDraft[]>([])
 
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -70,14 +74,15 @@ export function InviteMemberDialog({
   function reset() {
     setEmailDraft("")
     setEmailError(null)
+    setIsChecking(false)
     setDrafts([])
     setSuccessfulInvites([])
     setInviteErrors([])
   }
 
-  function addEmail() {
+  async function addEmail() {
     const email = emailDraft.trim().toLowerCase()
-    if (!email) return
+    if (!email || isChecking) return
 
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       setEmailError("That doesn't look like a valid email.")
@@ -92,9 +97,22 @@ export function InviteMemberDialog({
       return
     }
 
-    setDrafts((prev) => [...prev, makeDraft(email)])
-    setEmailDraft("")
+    setIsChecking(true)
     setEmailError(null)
+    try {
+      const result = await lookupUserByEmail(email)
+      if (!result.found) {
+        setEmailError("No Annomaster account exists for this email yet — ask them to sign up first, or double-check the address.")
+        return
+      }
+      const name = `${result.first_name ?? ""} ${result.last_name ?? ""}`.trim() || null
+      setDrafts((prev) => [...prev, makeDraft(email, name)])
+      setEmailDraft("")
+    } catch {
+      setEmailError("Couldn't verify that email right now. Please try again.")
+    } finally {
+      setIsChecking(false)
+    }
   }
 
   function handleEmailKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
@@ -160,7 +178,7 @@ export function InviteMemberDialog({
         }
       }}
     >
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>Invite members</DialogTitle>
           <DialogDescription>
@@ -183,9 +201,9 @@ export function InviteMemberDialog({
                 placeholder="Type an email and press Enter..."
                 className="flex-1"
               />
-              <Button type="button" variant="outline" onClick={addEmail}>
+              <Button type="button" variant="outline" onClick={addEmail} disabled={!emailDraft.trim() || isChecking}>
                 <Plus className="size-3.5" />
-                Add
+                {isChecking ? "Checking…" : "Add"}
               </Button>
             </div>
             {emailError && <p className="text-xs text-destructive">{emailError}</p>}
@@ -206,8 +224,21 @@ export function InviteMemberDialog({
                       ) : (
                         <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
                       )}
-                      <span className="truncate text-sm font-medium text-foreground">
-                        {draft.email}
+                      <span className="min-w-0 flex-1">
+                        {draft.name ? (
+                          <span className="flex flex-col leading-tight">
+                            <span className="truncate text-sm font-medium text-foreground">
+                              {draft.name}
+                            </span>
+                            <span className="truncate text-xs text-muted-foreground">
+                              {draft.email}
+                            </span>
+                          </span>
+                        ) : (
+                          <span className="truncate text-sm font-medium text-foreground">
+                            {draft.email}
+                          </span>
+                        )}
                       </span>
                       <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
                         {ROLE_SUMMARY[draft.role]}

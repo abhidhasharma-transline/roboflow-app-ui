@@ -28,6 +28,24 @@ export function WorkspacePage() {
 
   useEffect(refetch, [])
 
+  // A tab left open on this page goes stale the moment an invite is
+  // resolved from somewhere else — another tab, the emailed accept link, a
+  // different device. Refetching on focus/visibility means switching back
+  // to this tab clears an already-accepted/declined invite instead of
+  // leaving its Accept/Decline buttons sitting there indefinitely.
+  useEffect(() => {
+    function onFocus() {
+      if (document.visibilityState !== "hidden") refetch()
+    }
+    window.addEventListener("focus", onFocus)
+    document.addEventListener("visibilitychange", onFocus)
+    return () => {
+      window.removeEventListener("focus", onFocus)
+      document.removeEventListener("visibilitychange", onFocus)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   function openWorkspace(ws: Workspace) {
   setActiveWorkspace(ws.id, ws.name) 
   navigate("/projects")

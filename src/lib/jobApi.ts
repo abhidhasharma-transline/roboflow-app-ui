@@ -275,6 +275,21 @@ export async function moveJobToUnassigned(
   return res.data
 }
 
+/** To Do tab's "Add to Annotated" — promotes selected images straight to
+ *  Annotated, but only the ones that actually have real boxes on them
+ *  already (e.g. a mistaken reject). Others are silently left in To Do. */
+export async function markJobImagesAnnotated(
+  workspaceId: string,
+  projectId: string,
+  jobId: string,
+  imageIds: string[]
+): Promise<{ moved: number; skipped_no_annotations: number }> {
+  const res = await api.post(`${jobsBase(workspaceId, projectId)}/${jobId}/mark-annotated`, {
+    image_ids: imageIds,
+  })
+  return res.data
+}
+
 export type DatasetSplitMethod = "existing" | "split" | "all_train" | "all_valid" | "all_test"
 
 export async function addJobImagesToDataset(

@@ -32,6 +32,7 @@ import {
   updateJobTitle, tagJobImages, moveJobToUnassigned, deleteJobAnnotations,
 } from "@/lib/jobApi"
 import { discardBatch } from "@/lib/uploadApi"
+import { listProjectMembers } from "@/lib/projectApi"
 import { extractErrorMessage } from "@/lib/utils"
 import { useWorkspaceStore } from "@/stores/workspaceStore"
 import { useToastStore } from "@/stores/toastStore"
@@ -542,7 +543,7 @@ function ActiveJobCard({
             >
               Rename Job
             </DropdownMenuItem>
-            {canManageImages && <DropdownMenuItem onClick={() => setTagOpen(true)}>Tag Images</DropdownMenuItem>}
+            <DropdownMenuItem onClick={() => setTagOpen(true)}>Tag Images</DropdownMenuItem>
             {canAnnotate && (
               <DropdownMenuItem onClick={() => setMoveOpen(true)}>Move to unassigned</DropdownMenuItem>
             )}
@@ -723,14 +724,12 @@ function DatasetJobCard({
   projectId,
   workspaceId,
   onChanged,
-  canManageImages,
   canAnnotate,
 }: {
   job: JobSummary
   projectId: string
   workspaceId: string
   onChanged: () => void
-  canManageImages: boolean
   canAnnotate: boolean
 }) {
   const labelerText =
@@ -809,7 +808,7 @@ function DatasetJobCard({
             >
               Rename Job
             </DropdownMenuItem>
-            {canManageImages && <DropdownMenuItem onClick={() => setTagOpen(true)}>Tag Images</DropdownMenuItem>}
+            <DropdownMenuItem onClick={() => setTagOpen(true)}>Tag Images</DropdownMenuItem>
             {canAnnotate && (
               <DropdownMenuItem onClick={() => setMoveOpen(true)}>Move to unassigned</DropdownMenuItem>
             )}
@@ -904,16 +903,29 @@ export function AnnotatePage() {
   const workspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   const addToast = useToastStore((s) => s.addToast)
   const { project } = useProject(projectId)
-  // A Reviewer can't assign work or manage images (upload/tag/delete) — see
+  // A Reviewer can't assign work or manage images (upload/delete) — see
   // ProjectSidebar.tsx for the same flags. Unassigned batches have nothing
   // a Reviewer can act on (nothing annotated yet to review, can't assign
   // either), so that whole column is hidden rather than shown empty-handed.
+  // Tagging is open to every role, so it isn't gated behind either flag.
   const canAnnotate = project?.my_permissions?.annotate !== false
   const canManageImages = project?.my_permissions?.label_images !== false
   const [unassignedBatches, setUnassignedBatches] = useState<BatchSummary[]>([])
   const [activeJobs, setActiveJobs] = useState<JobSummary[]>([])
   const [datasetJobs, setDatasetJobs] = useState<JobSummary[]>([])
   const [loading, setLoading] = useState(true)
+  // A project with no reviewer can never produce a job needing review — the
+  // Review column would just sit there showing "0 Jobs" forever, implying a
+  // review step exists when it doesn't. Same signal JobPage's Progress panel
+  // already uses to hide Approved/Rejected in the same situation.
+  const [projectHasReviewers, setProjectHasReviewers] = useState(false)
+
+  useEffect(() => {
+    if (!workspaceId || !projectId) return
+    listProjectMembers(workspaceId, projectId, "reviewer")
+      .then((members) => setProjectHasReviewers(members.length > 0))
+      .catch(() => {})
+  }, [workspaceId, projectId])
 
   // Split the one "annotating" list the backend gives us: a job flips into
   // the Review column once needs_review says so (fully labeled, something
@@ -951,9 +963,18 @@ export function AnnotatePage() {
 
   useEffect(refetch, [workspaceId, projectId])
 
+  // Unassigned and Review are each conditionally hidden (see their own
+  // comments below) — the fixed 4-column class doesn't track that, so it
+  // needs to shrink instead of leaving the remaining columns oddly narrow
+  // with a gap where a hidden one used to be. Full literal class names
+  // (not a template-built one) so Tailwind's scanner actually picks them up.
+  const visibleColumnCount = 2 + (canAnnotate ? 1 : 0) + (projectHasReviewers ? 1 : 0)
+  const gridColsClass =
+    visibleColumnCount === 4 ? "lg:grid-cols-4" : visibleColumnCount === 3 ? "lg:grid-cols-3" : "lg:grid-cols-2"
+
   return (
-    <div className="flex-1 overflow-y-auto p-8">
-      <div className="mb-6 flex items-center justify-between">
+    <div className="flex h-full flex-col overflow-hidden p-8">
+      <div className="mb-6 flex shrink-0 items-center justify-between">
         <h1 className="flex items-center gap-2.5 text-2xl font-semibold text-foreground">
           <ClipboardList className="size-6" />
           Annotate
@@ -975,13 +996,13 @@ export function AnnotatePage() {
       {loading ? (
         <PageLoader />
       ) : (
-        <div className={`grid grid-cols-1 gap-5 ${canAnnotate ? "lg:grid-cols-4" : "lg:grid-cols-3"}`}>
+        <div className={`grid min-h-0 flex-1 grid-cols-1 gap-5 ${gridColsClass}`}>
           {/* Unassigned — real batches. Nothing here is actionable for a
               Reviewer (can't annotate yet, can't assign), so it's hidden
               rather than shown as a dead-end empty column. */}
           {canAnnotate && (
-          <div className="flex flex-col rounded-xl border border-border">
-            <div className="border-b border-border p-4 text-center">
+          <div className="flex min-h-0 flex-col rounded-xl border border-border">
+            <div className="shrink-0 border-b border-border p-4 text-center">
               <h2 className="flex items-center justify-center gap-1.5 text-base font-semibold text-foreground">
                 Unassigned
                 <ColumnHelp text="These are uploaded images that are auto-batched for easy assignment to users. These are images with no annotations and no assigned labelers." />
@@ -990,7 +1011,7 @@ export function AnnotatePage() {
                 {unassignedBatches.length} Batch{unassignedBatches.length !== 1 && "es"}
               </p>
             </div>
-            <div className="flex flex-1 flex-col gap-3 p-4">
+            <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
               {unassignedBatches.length === 0 ? (
                 <div className="flex flex-1 flex-col items-center justify-center gap-3 py-10 text-center">
                   <Link
@@ -1018,8 +1039,8 @@ export function AnnotatePage() {
           )}
 
           {/* Annotating — real active jobs */}
-          <div className="flex flex-col rounded-xl border border-border">
-            <div className="border-b border-border p-4 text-center">
+          <div className="flex min-h-0 flex-col rounded-xl border border-border">
+            <div className="shrink-0 border-b border-border p-4 text-center">
               <h2 className="flex items-center justify-center gap-1.5 text-base font-semibold text-foreground">
                 Annotating
                 <ColumnHelp text="Once a batch is assigned to a user for annotation, it will appear as an annotation job here. Moving a job back to unassigned sends its images back to the Unassigned column as a batch." />
@@ -1028,7 +1049,7 @@ export function AnnotatePage() {
                 {annotatingJobs.length} Job{annotatingJobs.length !== 1 && "s"}
               </p>
             </div>
-            <div className="flex flex-1 flex-col gap-3 p-4">
+            <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
               {annotatingJobs.length === 0 ? (
                 <div className="flex flex-1 flex-col items-center justify-center gap-3 py-10 text-center">
                   <p className="text-sm text-muted-foreground">
@@ -1054,9 +1075,14 @@ export function AnnotatePage() {
           {/* Review — fully-annotated jobs still awaiting a reviewer's
               verdict. Split out of Annotating so the review backlog is
               visible project-wide at a glance instead of hiding inside
-              each job's own sidebar. */}
-          <div className="flex flex-col rounded-xl border border-border">
-            <div className="border-b border-border p-4 text-center">
+              each job's own sidebar. Hidden entirely on a project with no
+              reviewer at all — it could otherwise never hold a job (nothing
+              can "await a reviewer's verdict" when there's no reviewer),
+              so it just sat there permanently reading "0 Jobs" as if a
+              review step existed here. */}
+          {projectHasReviewers && (
+          <div className="flex min-h-0 flex-col rounded-xl border border-border">
+            <div className="shrink-0 border-b border-border p-4 text-center">
               <h2 className="flex items-center justify-center gap-1.5 text-base font-semibold text-foreground">
                 Review
                 <ColumnHelp text="Jobs that are fully annotated but still have images awaiting a reviewer's approval or rejection. Once every image is approved, use 'Add to Dataset' to move it to the Dataset column." />
@@ -1065,7 +1091,7 @@ export function AnnotatePage() {
                 {reviewJobs.length} Job{reviewJobs.length !== 1 && "s"}
               </p>
             </div>
-            <div className="flex flex-1 flex-col gap-3 p-4">
+            <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
               {reviewJobs.length === 0 ? (
                 <div className="flex flex-1 flex-col items-center justify-center gap-3 py-10 text-center">
                   <p className="text-sm text-muted-foreground">
@@ -1088,10 +1114,11 @@ export function AnnotatePage() {
               )}
             </div>
           </div>
+          )}
 
           {/* Dataset — real dataset-stage jobs */}
-          <div className="flex flex-col rounded-xl border border-border">
-            <div className="border-b border-border p-4 text-center">
+          <div className="flex min-h-0 flex-col rounded-xl border border-border">
+            <div className="shrink-0 border-b border-border p-4 text-center">
               <h2 className="flex items-center justify-center gap-1.5 text-base font-semibold text-foreground">
                 Dataset
                 <ColumnHelp text="Approved annotated images are added here to build your training dataset." />
@@ -1100,7 +1127,7 @@ export function AnnotatePage() {
                 {datasetJobs.length} Job{datasetJobs.length !== 1 && "s"}
               </p>
             </div>
-            <div className="flex flex-1 flex-col gap-3 p-4">
+            <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
               {datasetJobs.length === 0 ? (
                 <div className="flex flex-1 flex-col items-center justify-center gap-3 py-10 text-center">
                   <p className="text-sm text-muted-foreground">
@@ -1115,7 +1142,6 @@ export function AnnotatePage() {
                     projectId={projectId!}
                     workspaceId={workspaceId!}
                     onChanged={refetch}
-                    canManageImages={canManageImages}
                     canAnnotate={canAnnotate}
                   />
                 ))

@@ -82,3 +82,16 @@ export async function deleteAnnotation(
 ): Promise<void> {
   await api.delete(`${base(workspaceId, projectId, imageId)}/${annotationId}`)
 }
+
+/** Toggles "nothing to annotate here" — clears any existing annotations
+ *  when marking null, on when the image was already marked. */
+export async function toggleImageNull(
+  workspaceId: string,
+  projectId: string,
+  imageId: string
+): Promise<{ is_null: boolean; status: string }> {
+  const res = await api.post<{ is_null: boolean; status: string }>(
+    `${base(workspaceId, projectId, imageId)}/mark-null`
+  )
+  return res.data
+}

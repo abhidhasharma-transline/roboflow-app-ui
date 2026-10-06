@@ -18,6 +18,7 @@ export interface Project {
   folder_id: string | null
   is_active: boolean
   created_at: string
+  created_by: string
   thumbnail_url: string | null
   classes_locked: boolean
   /** The caller's own role/permissions in this project — undefined on list

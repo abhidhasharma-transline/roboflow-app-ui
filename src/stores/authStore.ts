@@ -1,6 +1,7 @@
 import { create } from "zustand"
 import type { User } from "@/types/auth"
 import { getMe } from "@/lib/authApi"
+import { useWorkspaceStore } from "@/stores/workspaceStore"
 
 interface AuthState {
   user: User | null
@@ -22,11 +23,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   login: (user, token) => {
     localStorage.setItem("auth_token", token)
     set({ user, token, isAuthenticated: true })
+    // Defensive, not just belt-and-suspenders for logout(): activateAccount
+    // and similar flows call login() directly without ever going through
+    // logout() first, so this is the only place that's guaranteed to run
+    // right before a session actually starts using its new identity.
+    useWorkspaceStore.getState().reset()
   },
 
   logout: () => {
     localStorage.removeItem("auth_token")
     set({ user: null, token: null, isAuthenticated: false })
+    useWorkspaceStore.getState().reset()
   },
 
   setUser: (user) => set({ user }),
@@ -41,6 +48,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     } catch {
       localStorage.removeItem("auth_token")
       set({ user: null, token: null, isAuthenticated: false })
+      useWorkspaceStore.getState().reset()
     } finally {
       set({ isHydrating: false })
     }

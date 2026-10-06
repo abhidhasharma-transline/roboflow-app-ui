@@ -31,15 +31,21 @@ export function AnnotationBoxOverlay({
   masked: boolean
   onDelete: () => void
   onContextMenu: (e: React.MouseEvent) => void
-  onBodyMouseDown: (e: React.MouseEvent) => void
-  onHandleMouseDown: (handle: ResizeHandle, e: React.MouseEvent) => void
+  onBodyMouseDown: (e: React.PointerEvent) => void
+  onHandleMouseDown: (handle: ResizeHandle, e: React.PointerEvent) => void
 }) {
   const lockedByOther = Boolean(lockedBy && lockedBy.userId !== currentUserId)
 
   return (
     <div
       onContextMenu={onContextMenu}
-      onMouseDown={selectable && !lockedByOther ? onBodyMouseDown : undefined}
+      // The canvas listens for onPointerDown (see AnnotationTool.tsx's
+      // canvasRef), not onMouseDown — a browser fires pointerdown BEFORE
+      // the mousedown compatibility event, so stopPropagation() on a
+      // mousedown here can't stop a pointerdown that already bubbled up
+      // and started a canvas pan. Using onPointerDown here instead stops
+      // the SAME event type the canvas is listening for.
+      onPointerDown={selectable && !lockedByOther ? onBodyMouseDown : undefined}
       className="group absolute border-2"
       style={{
         left: `${bbox.x}%`,
@@ -79,7 +85,7 @@ export function AnnotationBoxOverlay({
         RESIZE_HANDLES.map((h) => (
           <div
             key={h.key}
-            onMouseDown={(e) => {
+            onPointerDown={(e) => {
               e.stopPropagation()
               onHandleMouseDown(h.key, e)
             }}

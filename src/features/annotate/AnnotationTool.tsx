@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   Eye,
   EyeOff,
   MoreHorizontal,
@@ -15,7 +16,6 @@ import {
   MessageSquare,
   Undo2,
   Redo2,
-  CircleSlash,
   Minus,
   Plus,
   Lock,
@@ -49,6 +49,7 @@ import {
   AtSign,
   Loader2,
   Send,
+  Ban,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -71,14 +72,14 @@ import { useThemeStore } from "@/stores/themeStore"
 import { useToastStore } from "@/stores/toastStore"
 import { useProject } from "@/hooks/useProjects"
 import { useAnnotationSocket } from "@/hooks/useAnnotationSocket"
-import { getJobImages, moveJobToUnassigned, deleteJobAnnotations } from "@/lib/jobApi"
+import { getJobImages, moveJobToUnassigned } from "@/lib/jobApi"
 import { listClasses, quickCreateClass, updateClass, type ProjectClass } from "@/lib/classApi"
-import { listAnnotations, createAnnotation, updateAnnotation, deleteAnnotation, toStoreAnnotation } from "@/lib/annotationApi"
+import { listAnnotations, createAnnotation, updateAnnotation, deleteAnnotation, toStoreAnnotation, toggleImageNull } from "@/lib/annotationApi"
 import {
   listImageTags, addImageTag, removeImageTag, addImageMetadata, removeImageMetadata,
   type ImageTag,
 } from "@/lib/tagApi"
-import { getImage, getImageUrl, type ImageDetail } from "@/lib/imageApi"
+import { getImage, getImageUrl, bulkSetSplit, type ImageDetail } from "@/lib/imageApi"
 import {
   listComments, createComment, deleteComment, getImageHistory,
   removeImageFromProject, setAsCoverPhoto, addImageToDataset, sendImageToUnannotated,
@@ -97,6 +98,18 @@ import { AnnotationBoxOverlay } from "./AnnotationBoxOverlay"
 import { ClassRow } from "./ClassRow"
 import { SubmitForReviewDialog } from "./SubmitForReviewDialog"
 
+// Mirrors the Dataset page's own SPLIT_BADGE colors so a Train/Valid/Test
+// image reads the same way whether it's seen there or opened here.
+const SPLIT_LABEL: Record<"train" | "valid" | "test", string> = {
+  train: "Train",
+  valid: "Valid",
+  test: "Test",
+}
+const SPLIT_PILL_CLASS: Record<"train" | "valid" | "test", string> = {
+  train: "bg-brand text-brand-foreground",
+  valid: "bg-blue-500 text-white",
+  test: "bg-orange-500 text-white",
+}
 
 export function AnnotationToolPage() {
   const { projectId, jobId } = useParams<{ projectId: string; jobId: string }>()
@@ -121,10 +134,12 @@ export function AnnotationToolPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [movingToUnassigned, setMovingToUnassigned] = useState(false)
   const [deletingAllAnnotations, setDeletingAllAnnotations] = useState(false)
+  const [togglingNull, setTogglingNull] = useState(false)
   const [downloadingImage, setDownloadingImage] = useState(false)
   const [settingCover, setSettingCover] = useState(false)
   const [removingFromProject, setRemovingFromProject] = useState(false)
   const [togglingDatasetStatus, setTogglingDatasetStatus] = useState(false)
+  const [changingSplit, setChangingSplit] = useState(false)
   const [submitReviewOpen, setSubmitReviewOpen] = useState(false)
   const [projectHasReviewers, setProjectHasReviewers] = useState(false)
 
@@ -1159,17 +1174,50 @@ export function AnnotationToolPage() {
   }
 
   async function handleDeleteAllAnnotations() {
-    if (!workspaceId || !projectId || !jobId || !currentImage) return
+    if (!workspaceId || !projectId || !currentImage || annotations.length === 0) return
     setDeletingAllAnnotations(true)
     try {
-      await deleteJobAnnotations(workspaceId, projectId, jobId)
-      const rows = await listAnnotations(workspaceId, projectId, currentImage.id)
-      setAnnotations(rows.map(toStoreAnnotation))
+      // Scoped to just this image. This used to call the job-wide bulk
+      // endpoint, which wiped every OTHER image's annotations in the job
+      // too — a labeler clicking this from inside one image's editor lost
+      // work across the whole job, not just the picture they were looking
+      // at. Sequential (not Promise.all) so the backend's "was that the
+      // last annotation on this image?" status flip sees them go one at a
+      // time instead of racing.
+      for (const a of annotations) {
+        await deleteAnnotation(workspaceId, projectId, currentImage.id, a.id)
+      }
+      setAnnotations([])
       addToast({ variant: "success", title: "Annotations deleted" })
     } catch {
       addToast({ variant: "error", title: "Couldn't delete annotations", description: "Please try again." })
+      const rows = await listAnnotations(workspaceId, projectId, currentImage.id)
+      setAnnotations(rows.map(toStoreAnnotation))
     } finally {
       setDeletingAllAnnotations(false)
+    }
+  }
+
+  async function handleToggleNull() {
+    if (!workspaceId || !projectId || !currentImage) return
+    setTogglingNull(true)
+    try {
+      const result = await toggleImageNull(workspaceId, projectId, currentImage.id)
+      setImages((prev) =>
+        prev.map((img) =>
+          img.id === currentImage.id ? { ...img, is_null: result.is_null, status: result.status } : img
+        )
+      )
+      if (result.is_null) setAnnotations([])
+      addToast({
+        variant: "success",
+        title: result.is_null ? "Marked as null" : "Unmarked as null",
+        description: result.is_null ? "Confirmed — nothing to annotate in this image." : undefined,
+      })
+    } catch {
+      addToast({ variant: "error", title: "Couldn't update this image", description: "Please try again." })
+    } finally {
+      setTogglingNull(false)
     }
   }
 
@@ -1294,6 +1342,20 @@ export function AnnotationToolPage() {
       }
     } finally {
       setTogglingDatasetStatus(false)
+    }
+  }
+
+  async function handleChangeSplit(split: "train" | "valid" | "test") {
+    if (!workspaceId || !projectId || !currentImage || changingSplit || split === currentImage.split) return
+    setChangingSplit(true)
+    try {
+      await bulkSetSplit(workspaceId, projectId, [currentImage.id], split)
+      setImages((prev) => prev.map((img) => (img.id === currentImage.id ? { ...img, split } : img)))
+      addToast({ variant: "success", title: `Moved to ${SPLIT_LABEL[split]}` })
+    } catch {
+      addToast({ variant: "error", title: "Couldn't change split", description: "Please try again." })
+    } finally {
+      setChangingSplit(false)
     }
   }
 
@@ -1718,7 +1780,15 @@ export function AnnotationToolPage() {
             <ChevronRight className="size-3.5" />
             <span className="text-brand">ANNOTATE</span>
           </button>
-          <p className="mt-0.5 text-sm font-medium text-foreground">{currentImage.filename}</p>
+          <p className="mt-0.5 flex items-center gap-1.5 text-sm font-medium text-foreground">
+            {currentImage.filename}
+            {currentImage.is_null && (
+              <span className="flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">
+                <Ban className="size-3" />
+                NULL
+              </span>
+            )}
+          </p>
         </div>
 
         <div className="flex items-center gap-2">
@@ -1763,6 +1833,32 @@ export function AnnotationToolPage() {
           >
             <Check className="size-4" />
           </Button>
+          {isInDataset && currentImage.split && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  disabled={changingSplit}
+                  className={cn(
+                    "flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide disabled:opacity-60",
+                    SPLIT_PILL_CLASS[currentImage.split]
+                  )}
+                  title="This image's Train/Valid/Test split"
+                >
+                  {SPLIT_LABEL[currentImage.split]}
+                  <ChevronDown className="size-3" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {(["train", "valid", "test"] as const)
+                  .filter((s) => s !== currentImage.split)
+                  .map((s) => (
+                    <DropdownMenuItem key={s} onClick={() => handleChangeSplit(s)}>
+                      Move This Image To {SPLIT_LABEL[s]}
+                    </DropdownMenuItem>
+                  ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
 
         <div className="flex items-center gap-1">
@@ -1829,11 +1925,28 @@ export function AnnotationToolPage() {
                 Move to unassigned
               </DropdownMenuItem>
               <DropdownMenuItem
-                disabled={deletingAllAnnotations}
+                disabled={deletingAllAnnotations || annotations.length === 0}
                 onClick={handleDeleteAllAnnotations}
                 className="text-destructive focus:text-destructive"
               >
-                Delete all annotations
+                Delete all annotations on this image
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                disabled={togglingNull}
+                onClick={handleToggleNull}
+                title={
+                  currentImage?.is_null
+                    ? "This image is confirmed empty — undo that"
+                    : "Nothing to annotate here? Confirm it as a negative/background example instead of leaving it unannotated"
+                }
+              >
+                <Ban className="size-3.5" />
+                {togglingNull
+                  ? "Updating…"
+                  : currentImage?.is_null
+                    ? "Unmark as Null"
+                    : "Mark as Null (no objects)"}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -3023,8 +3136,18 @@ export function AnnotationToolPage() {
             <Redo2 className="size-4" />
           </Button>
           <div className="my-1.5 h-px w-8 bg-border" />
-          <Button variant="ghost" size="icon" disabled title="Clear (coming soon)">
-            <CircleSlash className="size-4" />
+          <Button
+            variant={currentImage?.is_null ? "brand" : "ghost"}
+            size="icon"
+            disabled={togglingNull || !currentImage}
+            onClick={handleToggleNull}
+            title={
+              currentImage?.is_null
+                ? "Marked as Null — nothing to annotate here. Click to undo."
+                : "Mark as Null — confirm this image has no objects to annotate"
+            }
+          >
+            <Ban className="size-4" />
           </Button>
         </div>
       </div>

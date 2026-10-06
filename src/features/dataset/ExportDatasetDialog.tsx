@@ -49,6 +49,10 @@ export function ExportDatasetDialog({
   classCount,
   open,
   onOpenChange,
+  tagId,
+  classId,
+  split,
+  search,
 }: {
   workspaceId: string
   projectId: string
@@ -56,6 +60,16 @@ export function ExportDatasetDialog({
   classCount: number
   open: boolean
   onOpenChange: (open: boolean) => void
+  // Current Dataset page filters (tag/class/split/search) — passed through
+  // so "Export" matches exactly what's showing on screen instead of always
+  // dumping the whole dataset. `classCount` in the header above stays the
+  // project's total class count (a label for context); the actual data.yaml
+  // class list is scoped server-side to only classes used by this filtered
+  // image set.
+  tagId?: string
+  classId?: string
+  split?: string
+  search?: string
 }) {
   const [format, setFormat] = useState(YOLO_FORMATS[1])
   const [counts, setCounts] = useState<{ total: number; train: number; valid: number; test: number } | null>(null)
@@ -100,20 +114,37 @@ export function ExportDatasetDialog({
     setMessage("")
     setDownloadUrl(null)
     setCounts(null)
-    Promise.all([
-      listProjectImages(workspaceId, projectId, { status: "dataset", limit: 1 }),
-      listProjectImages(workspaceId, projectId, { status: "dataset", split: "train", limit: 1 }),
-      listProjectImages(workspaceId, projectId, { status: "dataset", split: "valid", limit: 1 }),
-      listProjectImages(workspaceId, projectId, { status: "dataset", split: "test", limit: 1 }),
-    ]).then(([all, train, valid, test]) => {
-      setCounts({ total: all.total, train: train.total, valid: valid.total, test: test.total })
-    })
+    // Filters carried in from the Dataset page's own grid — the counts and
+    // polygon-precheck below must reflect the actual filtered image set,
+    // not the whole dataset, so this dialog never shows a number different
+    // from what will actually end up in the export. When a split filter is
+    // already active, the exported set is entirely that one split, so skip
+    // the redundant per-split queries.
+    if (split) {
+      listProjectImages(workspaceId, projectId, { status: "dataset", tagId, classId, split, search, limit: 1 }).then((all) => {
+        setCounts({
+          total: all.total,
+          train: split === "train" ? all.total : 0,
+          valid: split === "valid" ? all.total : 0,
+          test: split === "test" ? all.total : 0,
+        })
+      })
+    } else {
+      Promise.all([
+        listProjectImages(workspaceId, projectId, { status: "dataset", tagId, classId, search, limit: 1 }),
+        listProjectImages(workspaceId, projectId, { status: "dataset", tagId, classId, split: "train", search, limit: 1 }),
+        listProjectImages(workspaceId, projectId, { status: "dataset", tagId, classId, split: "valid", search, limit: 1 }),
+        listProjectImages(workspaceId, projectId, { status: "dataset", tagId, classId, split: "test", search, limit: 1 }),
+      ]).then(([all, train, valid, test]) => {
+        setCounts({ total: all.total, train: train.total, valid: valid.total, test: test.total })
+      })
+    }
     setPrecheckLoading(true)
-    checkDatasetHasPolygon(workspaceId, projectId)
+    checkDatasetHasPolygon(workspaceId, projectId, { tagId, classId, split, search })
       .then(setHasPolygon)
       .catch(() => setHasPolygon(false))
       .finally(() => setPrecheckLoading(false))
-  }, [open, workspaceId, projectId])
+  }, [open, workspaceId, projectId, tagId, classId, split, search])
 
   useEffect(() => stopPolling, [])
 
@@ -123,7 +154,7 @@ export function ExportDatasetDialog({
     setMessage("Starting export…")
     toastIdRef.current = addToast({ variant: "loading", title: "Preparing export…" })
     try {
-      const { export_id } = await startDatasetExport(workspaceId, projectId, format)
+      const { export_id } = await startDatasetExport(workspaceId, projectId, format, { tagId, classId, split, search })
       let attempts = 0
       pollRef.current = setInterval(async () => {
         attempts += 1
@@ -177,6 +208,7 @@ export function ExportDatasetDialog({
   }
 
   const busy = phase === "exporting"
+  const isFiltered = Boolean(tagId || classId || split || search)
   const total = counts?.total ?? 0
   const trainPct = total > 0 ? ((counts?.train ?? 0) / total) * 100 : 0
   const validPct = total > 0 ? ((counts?.valid ?? 0) / total) * 100 : 0
@@ -203,8 +235,20 @@ export function ExportDatasetDialog({
           <>
             <div className="rounded-lg border border-border p-3">
               <p className="mb-2 text-sm text-muted-foreground">
-                {total} image{total !== 1 && "s"} · {classCount} class{classCount !== 1 && "es"}
+                {total} image{total !== 1 && "s"}
+                {isFiltered ? (
+                  <span className="ml-1.5 rounded-full bg-brand/10 px-2 py-0.5 text-xs font-medium text-brand">
+                    filtered
+                  </span>
+                ) : (
+                  <> · {classCount} class{classCount !== 1 && "es"}</>
+                )}
               </p>
+              {isFiltered && (
+                <p className="mb-2 text-xs text-muted-foreground">
+                  Sirf on-screen filters se match karne wali images export hongi — data.yaml me sirf unme use ho rahi classes aayengi.
+                </p>
+              )}
               {counts && total > 0 && (
                 <>
                   <div className="flex h-1.5 overflow-hidden rounded-full bg-muted">

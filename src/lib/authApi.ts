@@ -62,3 +62,15 @@ export async function getMyActivity(weeks = 12): Promise<ActivityDay[]> {
   const res = await api.get<ActivityDay[]>("/auth/me/activity", { params: { weeks } })
   return res.data
 }
+
+export interface UserLookup {
+  found: boolean
+  first_name: string | null
+  last_name: string | null
+}
+
+/** Exact-email lookup so the invite dialog can show a name while it's typed. */
+export async function lookupUserByEmail(email: string): Promise<UserLookup> {
+  const res = await api.get<UserLookup>("/auth/users/lookup", { params: { email } })
+  return res.data
+}

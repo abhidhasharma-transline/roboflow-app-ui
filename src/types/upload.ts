@@ -1,5 +1,12 @@
 // Mirrors app/api/v1/upload.py response shapes exactly.
 
+export interface SplitCounts {
+  train: number
+  valid: number
+  test: number
+  unassigned: number
+}
+
 export interface UploadImagesResponse {
   batch_id: string
   batch_name: string
@@ -11,6 +18,7 @@ export interface UploadImagesResponse {
   total: number
   images_annotated: number
   annotations_imported: number
+  split_counts: SplitCounts
 }
 
 export interface VideoInitiateResponse {
@@ -73,6 +81,7 @@ export interface BatchPreviewResponse {
     annotated: number
     unannotated: number
   }
+  split_counts: SplitCounts
   total: number
   skip: number
   limit: number
@@ -84,4 +93,8 @@ export interface SaveBatchResponse {
   batch_name: string
   status: string
   image_count: number
+  // Set when this batch had already-annotated images (a matching label per
+  // image) — those were wrapped into their own Annotating-stage job instead
+  // of sitting in Unassigned waiting for someone to manually assign them.
+  auto_job_id: string | null
 }

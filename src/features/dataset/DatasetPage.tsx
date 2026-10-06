@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
-import { useParams } from "react-router-dom"
+import { useParams, useNavigate } from "react-router-dom"
 import {
   Search,
   Eye,
@@ -20,7 +20,7 @@ import {
   ChevronRight,
   ChevronDown,
   Maximize2,
-  X,
+  Loader2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -44,7 +44,7 @@ import { useWorkspaceStore } from "@/stores/workspaceStore"
 import { useToastStore } from "@/stores/toastStore"
 import { useProject } from "@/hooks/useProjects"
 import { PageLoader } from "@/components/shared/PageLoader"
-import { listProjectImages, bulkSetSplit, markImagesNull, type ProjectImageSummary } from "@/lib/imageApi"
+import { listProjectImages, bulkSetSplit, markImagesNull, getImageJob, type ProjectImageSummary } from "@/lib/imageApi"
 import { removeImageFromProject } from "@/lib/commentApi"
 import { listClasses, type ProjectClass } from "@/lib/classApi"
 import { listTags, bulkApplyTags, bulkApplyMetadata, type ImageTag } from "@/lib/tagApi"
@@ -121,13 +121,13 @@ function NullBadge() {
 
 export function DatasetPage() {
   const { projectId } = useParams()
+  const navigate = useNavigate()
   const workspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   const addToast = useToastStore((s) => s.addToast)
   const { project } = useProject(projectId)
-  // A Reviewer can't tag images — see ProjectSidebar.tsx for the same flag.
-  // Hides "Add Tags & Metadata" wholesale rather than only the tags half,
-  // since the two apply in one sequential action and a blocked tag call
-  // would otherwise abort the metadata half too.
+  // Tagging is open to every role (Reviewers included) — only destructive
+  // image management (delete) stays gated behind label_images. See
+  // ProjectSidebar.tsx for the same flag on the sidebar's own actions.
   const canManageImages = project?.my_permissions?.label_images !== false
 
   const [images, setImages] = useState<ProjectImageSummary[]>([])
@@ -143,7 +143,25 @@ export function DatasetPage() {
   const [page, setPage] = useState(0)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [expandedRowIds, setExpandedRowIds] = useState<string[]>([])
-  const [previewIndex, setPreviewIndex] = useState<number | null>(null)
+  const [openingImageId, setOpeningImageId] = useState<string | null>(null)
+
+  // Opens a dataset image the same way an in-progress annotation image
+  // opens — the full annotation tool, with its real annotations and a
+  // Train/Valid/Test pill to move it between splits — instead of a
+  // read-only lightbox. Every dataset image already sits in its own
+  // dataset-stage job (see create_dataset_job), so this always resolves.
+  async function openInTool(imageId: string) {
+    if (!workspaceId || !projectId || openingImageId) return
+    setOpeningImageId(imageId)
+    try {
+      const { job_id } = await getImageJob(workspaceId, projectId, imageId)
+      navigate(`/projects/${projectId}/annotate/tool/${job_id}?image=${imageId}`)
+    } catch {
+      addToast({ variant: "error", title: "Couldn't open this image", description: "Please try again." })
+    } finally {
+      setOpeningImageId(null)
+    }
+  }
 
   const [classes, setClasses] = useState<ProjectClass[]>([])
   const [tags, setTags] = useState<ImageTag[]>([])
@@ -412,12 +430,12 @@ export function DatasetPage() {
           </p>
         ) : viewMode === "grid" ? (
           <div className="grid grid-cols-2 gap-4 pb-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
-            {images.map((img, index) => {
+            {images.map((img) => {
               const selected = selectedIds.includes(img.id)
               return (
                 <div key={img.id} className="group relative flex flex-col gap-1.5">
                   <div
-                    onClick={() => toggleSelect(img.id)}
+                    onClick={() => (selectedIds.length > 0 ? toggleSelect(img.id) : openInTool(img.id))}
                     className={`relative aspect-[4/3] cursor-pointer overflow-hidden rounded-md border bg-muted ${
                       selected ? "border-brand ring-2 ring-brand/30" : "border-border"
                     }`}
@@ -431,20 +449,25 @@ export function DatasetPage() {
                     )}
                     {showAnnotations && <AnnotationOverlay img={img} containerAspect={4 / 3} />}
                     <button
-                      title="View full size"
+                      title="Open in annotation tool"
+                      disabled={openingImageId === img.id}
                       onClick={(e) => {
                         e.stopPropagation()
-                        setPreviewIndex(index)
+                        openInTool(img.id)
                       }}
-                      className="absolute left-1.5 top-1.5 z-10 flex size-6 items-center justify-center rounded-md bg-background/90 text-foreground opacity-0 shadow-sm hover:bg-accent group-hover:opacity-100"
+                      className="absolute left-1.5 top-1.5 z-10 flex size-6 items-center justify-center rounded-md bg-background/90 text-foreground opacity-0 shadow-sm hover:bg-accent group-hover:opacity-100 disabled:opacity-100"
                     >
-                      <Maximize2 className="size-3.5" />
+                      {openingImageId === img.id ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        <Maximize2 className="size-3.5" />
+                      )}
                     </button>
                     <Checkbox
                       checked={selected}
                       onCheckedChange={() => toggleSelect(img.id)}
                       onClick={(e) => e.stopPropagation()}
-                      className="absolute right-1.5 top-1.5 z-10 bg-background/90 shadow-sm data-[state=unchecked]:opacity-0 group-hover:data-[state=unchecked]:opacity-100"
+                      className="absolute right-1.5 top-1.5 z-10 bg-background/90 shadow-sm"
                     />
                     <SplitBadge split={img.split} />
                     {img.is_null && <NullBadge />}
@@ -458,7 +481,7 @@ export function DatasetPage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-x-8 gap-y-3 pb-4 lg:grid-cols-2">
-            {images.map((img, index) => {
+            {images.map((img) => {
               const selected = selectedIds.includes(img.id)
               const badge = img.split ? SPLIT_BADGE[img.split] : null
               const uniqueClasses = Array.from(
@@ -468,7 +491,7 @@ export function DatasetPage() {
               return (
                 <div
                   key={img.id}
-                  onClick={() => toggleSelect(img.id)}
+                  onClick={() => (selectedIds.length > 0 ? toggleSelect(img.id) : openInTool(img.id))}
                   className={`flex cursor-pointer items-start gap-3 rounded-md border p-2.5 ${
                     selected ? "border-brand bg-brand/5" : "border-border"
                   }`}
@@ -480,10 +503,11 @@ export function DatasetPage() {
                     className="mt-0.5 shrink-0"
                   />
                   <button
-                    title="View full size"
+                    title="Open in annotation tool"
+                    disabled={openingImageId === img.id}
                     onClick={(e) => {
                       e.stopPropagation()
-                      setPreviewIndex(index)
+                      openInTool(img.id)
                     }}
                     className="group relative size-16 shrink-0 overflow-hidden rounded bg-muted"
                   >
@@ -492,7 +516,11 @@ export function DatasetPage() {
                     )}
                     {showAnnotations && <AnnotationOverlay img={img} containerAspect={1} />}
                     <span className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition-colors group-hover:bg-black/30 group-hover:opacity-100">
-                      <Maximize2 className="size-4 text-white" />
+                      {openingImageId === img.id ? (
+                        <Loader2 className="size-4 animate-spin text-white" />
+                      ) : (
+                        <Maximize2 className="size-4 text-white" />
+                      )}
                     </span>
                   </button>
                   <div className="min-w-0 flex-1 space-y-1 text-xs">
@@ -564,12 +592,10 @@ export function DatasetPage() {
             <Checkbox checked={allVisibleSelected} onCheckedChange={toggleSelectAll} />
             <span className="text-sm font-medium text-foreground">{selectedIds.length} images selected</span>
             <div className="mx-1 h-5 w-px bg-border" />
-            {canManageImages && (
-              <Button variant="outline" size="sm" onClick={() => setTagDialogOpen(true)} disabled={selectedIds.length === 0}>
-                <TagIcon className="size-3.5" />
-                Add Tags & Metadata
-              </Button>
-            )}
+            <Button variant="outline" size="sm" onClick={() => setTagDialogOpen(true)} disabled={selectedIds.length === 0}>
+              <TagIcon className="size-3.5" />
+              Add Tags & Metadata
+            </Button>
             <Button variant="outline" size="sm" onClick={() => setAssignPanelOpen(true)} disabled={selectedIds.length === 0}>
               <UserPlus className="size-3.5" />
               Assign for Labeling
@@ -783,71 +809,6 @@ export function DatasetPage() {
         />
       )}
 
-      <Dialog open={previewIndex !== null} onOpenChange={(v) => !v && setPreviewIndex(null)}>
-        <DialogContent
-          showCloseButton={false}
-          className="max-w-5xl gap-0 border-none bg-transparent p-0 shadow-none"
-        >
-          {previewIndex !== null && images[previewIndex] && (
-            <div className="flex flex-col gap-3">
-              <div className="flex items-center justify-between text-sm text-white">
-                <p className="truncate font-medium">{images[previewIndex].filename}</p>
-                <button
-                  onClick={() => setPreviewIndex(null)}
-                  className="flex size-7 items-center justify-center rounded-md hover:bg-white/10"
-                >
-                  <X className="size-4" />
-                </button>
-              </div>
-
-              <div className="relative flex items-center justify-center">
-                {previewIndex > 0 && (
-                  <button
-                    onClick={() => setPreviewIndex((i) => (i !== null ? i - 1 : i))}
-                    className="absolute left-2 z-10 flex size-9 items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70"
-                  >
-                    <ChevronLeft className="size-5" />
-                  </button>
-                )}
-
-                <div className="relative max-h-[80vh] overflow-hidden rounded-lg bg-black">
-                  {images[previewIndex].image_url ? (
-                    <img
-                      src={images[previewIndex].image_url ?? undefined}
-                      alt={images[previewIndex].filename}
-                      className="max-h-[80vh] max-w-full object-contain"
-                    />
-                  ) : (
-                    <div className="flex h-64 w-96 items-center justify-center text-sm text-muted-foreground">
-                      Preview unavailable
-                    </div>
-                  )}
-                  {showAnnotations && (
-                    <AnnotationOverlay
-                      img={images[previewIndex]}
-                      containerAspect={(images[previewIndex].width || 1) / (images[previewIndex].height || 1)}
-                    />
-                  )}
-                </div>
-
-                {previewIndex < images.length - 1 && (
-                  <button
-                    onClick={() => setPreviewIndex((i) => (i !== null ? i + 1 : i))}
-                    className="absolute right-2 z-10 flex size-9 items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70"
-                  >
-                    <ChevronRight className="size-5" />
-                  </button>
-                )}
-              </div>
-
-              <p className="text-center text-xs text-white/70">
-                {previewIndex + 1} of {images.length}
-              </p>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-
       {workspaceId && projectId && (
         <ExportDatasetDialog
           workspaceId={workspaceId}
@@ -856,6 +817,10 @@ export function DatasetPage() {
           classCount={classes.length}
           open={exportDialogOpen}
           onOpenChange={setExportDialogOpen}
+          tagId={tagFilter === "all" ? undefined : tagFilter}
+          classId={classFilter === "all" ? undefined : classFilter}
+          split={splitFilter === "all" ? undefined : splitFilter}
+          search={search || undefined}
         />
       )}
     </>

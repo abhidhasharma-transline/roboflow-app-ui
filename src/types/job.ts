@@ -78,6 +78,7 @@ export interface JobImageSummary {
   url: string
   status: string
   split: "train" | "valid" | "test" | null
+  is_null: boolean
 }
 
 export interface JobSummary {

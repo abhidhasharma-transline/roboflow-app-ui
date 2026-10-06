@@ -1,10 +1,11 @@
 import { useState } from "react"
-import { Image as ImageIcon, History, PieChart, Activity, ShieldCheck, Pencil } from "lucide-react"
+import { SplitSquareHorizontal, History, PieChart, Activity, ShieldCheck, Pencil } from "lucide-react"
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import {
@@ -14,11 +15,10 @@ import {
   SelectContent,
   SelectItem,
 } from "@/components/ui/select"
-import { addJobImagesToDataset, type DatasetSplitMethod } from "@/lib/jobApi"
-import { useToastStore } from "@/stores/toastStore"
-import { extractErrorMessage } from "@/lib/utils"
+import { applyBatchSplit, type SplitMethod } from "@/lib/uploadApi"
+import type { SplitCounts } from "@/types/upload"
 
-const METHOD_OPTIONS: { value: DatasetSplitMethod; label: string; icon: typeof History }[] = [
+const METHOD_OPTIONS: { value: SplitMethod; label: string; icon: typeof History }[] = [
   { value: "existing", label: "Use Existing Values", icon: History },
   { value: "split", label: "Split Images Between Train/Valid/Test", icon: PieChart },
   { value: "all_train", label: "Add All Images to Training Set", icon: Activity },
@@ -26,57 +26,57 @@ const METHOD_OPTIONS: { value: DatasetSplitMethod; label: string; icon: typeof H
   { value: "all_test", label: "Add All Images to Testing Set", icon: Pencil },
 ]
 
-/** Mirrors the backend's compute_splits() so the preview bar matches what
- * will actually happen — smaller buckets round down to zero instead of
- * forcing at least one image into every bucket, which is why 1-2 images
- * land 100% in Train instead of being force-split three ways. "existing"
- * can't be previewed exactly client-side (it depends on each image's prior
- * split, if any) — new images default to Train, so that's shown here too. */
-function computeSplitPreview(n: number, method: DatasetSplitMethod) {
-  if (method === "all_valid") return { train: 0, valid: n, test: 0 }
-  if (method === "all_test") return { train: 0, valid: 0, test: n }
-  if (method === "all_train" || method === "existing") return { train: n, valid: 0, test: 0 }
-  const train = Math.round(n * 0.7)
-  const valid = Math.round(n * 0.15)
-  const test = n - train - valid
-  return { train, valid, test }
+/** Same shape as AddToDatasetDialog's own preview — "existing" shows exactly
+ *  what upload-time detection already found (real per-image data, not a
+ *  guess); every other method recomputes from the total the same way
+ *  compute_splits (backend) does, so what's shown here is what Continue
+ *  will actually produce. */
+function computePreview(counts: SplitCounts, method: SplitMethod): { train: number; valid: number; test: number } {
+  const total = counts.train + counts.valid + counts.test + counts.unassigned
+  if (method === "existing") return { train: counts.train, valid: counts.valid, test: counts.test }
+  if (method === "all_valid") return { train: 0, valid: total, test: 0 }
+  if (method === "all_test") return { train: 0, valid: 0, test: total }
+  if (method === "all_train") return { train: total, valid: 0, test: 0 }
+  const train = Math.round(total * 0.7)
+  const valid = Math.round(total * 0.15)
+  return { train, valid, test: total - train - valid }
 }
 
-export function AddToDatasetDialog({
+export function SplitConfirmDialog({
   workspaceId,
   projectId,
-  jobId,
-  labeledCount,
-  remainingCount,
+  batchId,
+  splitCounts,
   open,
   onOpenChange,
-  onAdded,
+  onContinue,
 }: {
   workspaceId: string
   projectId: string
-  jobId: string
-  labeledCount: number
-  remainingCount: number
+  batchId: string
+  splitCounts: SplitCounts
   open: boolean
   onOpenChange: (open: boolean) => void
-  onAdded: (result: { job_id: string; images_added: number }) => void
+  /** Called once the chosen method has been applied server-side — proceeds
+   *  to the normal Save and Continue (name/tags finalize + auto-job-creation). */
+  onContinue: () => void
 }) {
-  const [method, setMethod] = useState<DatasetSplitMethod>("existing")
+  const [method, setMethod] = useState<SplitMethod>("existing")
   const [submitting, setSubmitting] = useState(false)
-  const addToast = useToastStore((s) => s.addToast)
+  const [error, setError] = useState<string | null>(null)
 
-  const preview = computeSplitPreview(labeledCount, method)
-  const pct = (n: number) => (labeledCount === 0 ? 0 : Math.round((n / labeledCount) * 100))
+  const total = splitCounts.train + splitCounts.valid + splitCounts.test + splitCounts.unassigned
+  const preview = computePreview(splitCounts, method)
+  const pct = (n: number) => (total === 0 ? 0 : Math.round((n / total) * 100))
 
-  async function handleAdd() {
+  async function handleContinue() {
     setSubmitting(true)
+    setError(null)
     try {
-      const res = await addJobImagesToDataset(workspaceId, projectId, jobId, method)
-      onAdded(res)
-      onOpenChange(false)
-    } catch (err) {
-      addToast({ variant: "error", title: "Couldn't add to dataset", description: extractErrorMessage(err) })
-    } finally {
+      await applyBatchSplit(workspaceId, projectId, batchId, method)
+      onContinue()
+    } catch {
+      setError("Couldn't apply this split — please try again.")
       setSubmitting(false)
     }
   }
@@ -86,28 +86,18 @@ export function AddToDatasetDialog({
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <ImageIcon className="size-4" />
-            Add Images to Dataset
+            <SplitSquareHorizontal className="size-4" />
+            How should we split these images?
           </DialogTitle>
+          <DialogDescription>
+            This folder already came with a Train/Valid/Test split — Use Existing Values keeps it
+            exactly as detected, or pick a different method below.
+          </DialogDescription>
         </DialogHeader>
-
-        <div className="rounded-lg border border-border p-3">
-          <div className="mb-2 flex items-center justify-between text-sm">
-            <span className="text-muted-foreground">Labeled Images to Add</span>
-            <span className="font-semibold text-foreground">{labeledCount}</span>
-          </div>
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-muted-foreground">Remaining Batch Images</span>
-            <span className="font-semibold text-foreground">{remainingCount}</span>
-          </div>
-          <p className="mt-2 text-center text-xs text-muted-foreground">
-            {remainingCount} labeled image{remainingCount !== 1 && "s"} will stay in this batch.
-          </p>
-        </div>
 
         <div>
           <p className="mb-1.5 text-sm font-medium text-foreground">Method</p>
-          <Select value={method} onValueChange={(v) => setMethod(v as DatasetSplitMethod)}>
+          <Select value={method} onValueChange={(v) => setMethod(v as SplitMethod)}>
             <SelectTrigger className="w-full">
               <SelectValue />
             </SelectTrigger>
@@ -152,12 +142,14 @@ export function AddToDatasetDialog({
           </div>
         </div>
 
+        {error && <p className="text-sm text-destructive">{error}</p>}
+
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
             Cancel
           </Button>
-          <Button variant="brand" onClick={handleAdd} disabled={submitting || labeledCount === 0}>
-            {submitting ? "Adding…" : `Add ${labeledCount} Image${labeledCount !== 1 ? "s" : ""}`}
+          <Button variant="brand" onClick={handleContinue} disabled={submitting}>
+            {submitting ? "Saving…" : "Continue"}
           </Button>
         </div>
       </DialogContent>

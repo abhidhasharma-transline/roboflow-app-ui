@@ -25,6 +25,7 @@ import {
   SelectItem,
 } from "@/components/ui/select"
 import { renameProject, deleteProject, moveProject, listFolders } from "@/lib/projectApi"
+import { useAuthStore } from "@/stores/authStore"
 import type { Project, ProjectFolder } from "@/types/project"
 
 const typeLabels: Record<Project["annotation_type"], string> = {
@@ -53,6 +54,13 @@ interface ProjectCardProps {
 }
 
 export function ProjectCard({ project, workspaceId, onChanged }: ProjectCardProps) {
+  const currentUser = useAuthStore((s) => s.user)
+  // Matches the backend's own rule (rename_project/move_project/delete_project
+  // in app/projects/route.py): these are ownership-level actions, not
+  // something a permission flag controls — only the project's creator or a
+  // super admin can do any of them. All three menu items showed for every
+  // project member regardless, so anyone could open them only to 403.
+  const isProjectOwner = currentUser?.role === "super_admin" || project.created_by === currentUser?.id
   const [renameOpen, setRenameOpen] = useState(false)
   const [renameValue, setRenameValue] = useState("")
   const [renameSaving, setRenameSaving] = useState(false)
@@ -165,18 +173,24 @@ export function ProjectCard({ project, workspaceId, onChanged }: ProjectCardProp
                   <Copy className="size-4" />
                   Copy Project Id
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={openRename}>
-                  <Pencil className="size-4" />
-                  Rename Project
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={openMove}>
-                  <FolderInput className="size-4" />
-                  Move Project
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setDeleteOpen(true)} variant="destructive">
-                  <Trash2 className="size-4" />
-                  Move to Trash
-                </DropdownMenuItem>
+                {isProjectOwner && (
+                  <DropdownMenuItem onClick={openRename}>
+                    <Pencil className="size-4" />
+                    Rename Project
+                  </DropdownMenuItem>
+                )}
+                {isProjectOwner && (
+                  <DropdownMenuItem onClick={openMove}>
+                    <FolderInput className="size-4" />
+                    Move Project
+                  </DropdownMenuItem>
+                )}
+                {isProjectOwner && (
+                  <DropdownMenuItem onClick={() => setDeleteOpen(true)} variant="destructive">
+                    <Trash2 className="size-4" />
+                    Move to Trash
+                  </DropdownMenuItem>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>

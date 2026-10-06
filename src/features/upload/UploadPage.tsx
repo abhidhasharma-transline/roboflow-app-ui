@@ -141,42 +141,58 @@ function LocalThumb({
   }, [natural])
 
   return (
-    <div className="group relative aspect-[4/3] overflow-hidden rounded-md border border-border bg-muted [content-visibility:auto] [contain-intrinsic-size:0_180px]">
-      {url && (
-        <img
-          src={url}
-          alt={file.name}
-          className="size-full object-contain"
-          onLoad={(e) => setNatural({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
-        />
-      )}
-      {!!boxes?.length && innerRect && (
-        <svg
-          className="pointer-events-none absolute"
-          style={{ left: `${innerRect.left}%`, top: `${innerRect.top}%`, width: `${innerRect.width}%`, height: `${innerRect.height}%` }}
-          viewBox="0 0 100 100"
-          preserveAspectRatio="none"
+    <div className="flex flex-col gap-1.5">
+      <div className="group relative aspect-[4/3] overflow-hidden rounded-md border border-border bg-muted [content-visibility:auto] [contain-intrinsic-size:0_180px]">
+        {url && (
+          <img
+            src={url}
+            alt={file.name}
+            className="size-full object-contain"
+            onLoad={(e) => setNatural({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
+          />
+        )}
+        {!!boxes?.length && innerRect && (
+          <svg
+            className="pointer-events-none absolute"
+            style={{ left: `${innerRect.left}%`, top: `${innerRect.top}%`, width: `${innerRect.width}%`, height: `${innerRect.height}%` }}
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+          >
+            {boxes.map((b, i) => (
+              <rect
+                key={i}
+                x={b.x}
+                y={b.y}
+                width={b.width}
+                height={b.height}
+                fill="none"
+                stroke={LOCAL_CLASS_COLORS[b.classId % LOCAL_CLASS_COLORS.length]}
+                strokeWidth={0.8}
+              />
+            ))}
+          </svg>
+        )}
+        <button
+          onClick={onRemove}
+          className="absolute top-1.5 right-1.5 rounded-full bg-black/60 p-1 text-white opacity-0 transition-opacity group-hover:opacity-100"
         >
-          {boxes.map((b, i) => (
-            <rect
-              key={i}
-              x={b.x}
-              y={b.y}
-              width={b.width}
-              height={b.height}
-              fill="none"
-              stroke={LOCAL_CLASS_COLORS[b.classId % LOCAL_CLASS_COLORS.length]}
-              strokeWidth={0.8}
-            />
-          ))}
-        </svg>
-      )}
-      <button
-        onClick={onRemove}
-        className="absolute top-1.5 right-1.5 rounded-full bg-black/60 p-1 text-white opacity-0 transition-opacity group-hover:opacity-100"
+          <X className="size-3" />
+        </button>
+      </div>
+      {/* Matches BatchReview's own grid (the post-upload equivalent of this
+          screen) — this pre-upload preview showed the box overlay but not
+          the filename it belongs to, the one thing you'd actually check
+          against your source folder before committing. Two lines + break-all
+          instead of a single truncated line — these filenames are long and
+          have almost no natural break points (all dashes/underscores), so a
+          one-line ellipsis was hiding most of it; wrapping shows far more of
+          the actual name before falling back to the title tooltip. */}
+      <p
+        className="line-clamp-2 break-all text-xs leading-snug text-muted-foreground"
+        title={file.name}
       >
-        <X className="size-3" />
-      </button>
+        {file.name}
+      </p>
     </div>
   )
 }
@@ -325,9 +341,17 @@ export function UploadPage() {
     if (folderInputRef.current) folderInputRef.current.value = ""
   }
 
-  function handleSaved(batchId: string) {
+  function handleSaved(batchId: string, autoJobId: string | null) {
     clearPendingBatch()
-    navigate(`/projects/${projectId}/annotate/batch/${batchId}`)
+    // A folder that came in already annotated skips the usual "assign it to
+    // someone" step entirely (see save_batch's auto_job_id) — land straight
+    // on that job instead of the batch-assign page, which would otherwise
+    // show 0 images needing assignment and look like the upload did nothing.
+    navigate(
+      autoJobId
+        ? `/projects/${projectId}/annotate/job/${autoJobId}`
+        : `/projects/${projectId}/annotate/batch/${batchId}`
+    )
   }
 
   async function handleDiscard() {
@@ -400,7 +424,7 @@ export function UploadPage() {
               batchId={stage.batchId}
               batchName={batchName}
               tags={tags}
-              onSaved={() => handleSaved(stage.batchId)}
+              onSaved={(autoJobId) => handleSaved(stage.batchId, autoJobId)}
             />
           ) : stage.kind === "selected" ? (
             <div>
@@ -503,7 +527,14 @@ export function UploadPage() {
                     ref={fileInputRef}
                     type="file"
                     multiple
-                    accept="image/jpeg,image/png,image/bmp,image/webp,image/avif,video/mp4,video/quicktime"
+                    // Images/video by MIME type, plus label files by extension
+                    // (.txt/.yaml/.yml have no single reliable MIME type
+                    // across OSes/browsers) — without these, "Select Files"
+                    // silently filtered label files out of the OS picker
+                    // entirely, so a manual multi-select of images + YOLO
+                    // labels (as opposed to "Select Folder") could never
+                    // actually import annotations, with no error shown.
+                    accept="image/jpeg,image/png,image/bmp,image/webp,image/avif,video/mp4,video/quicktime,.txt,.yaml,.yml"
                     className="hidden"
                     onChange={(e) => e.target.files && handleFiles(e.target.files)}
                   />

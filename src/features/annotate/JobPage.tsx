@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useParams, useNavigate, Link } from "react-router-dom"
-import { X, Pencil, Check, RotateCcw, Activity, ShieldCheck, ThumbsUp, ThumbsDown, Send } from "lucide-react"
+import { X, Pencil, Check, CheckCheck, RotateCcw, Activity, ShieldCheck, ThumbsUp, ThumbsDown, Send } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/select"
 import {
   getJob, getJobImages, getJobActivity, updateJobInstructions, updateJobTitle, listJobReviewers,
-  reviewJobImages,
+  reviewJobImages, markJobImagesAnnotated,
 } from "@/lib/jobApi"
 import { listProjectMembers } from "@/lib/projectApi"
 import { sendImageToUnannotated } from "@/lib/commentApi"
@@ -64,6 +64,12 @@ export function JobPage() {
   const [reviewerFilter, setReviewerFilter] = useState<string>("all")
 
   const [job, setJob] = useState<JobDetail | null>(null)
+  // Distinct from "still loading" — a job vanishes the moment every one of
+  // its images gets promoted to the dataset (create_dataset_job deletes the
+  // now-empty source job server-side). Landing back here afterwards (a
+  // stale tab, browser back, a bookmarked/shared link) used to hang on the
+  // loading spinner forever, since the failed refetch had nowhere to go.
+  const [jobNotFound, setJobNotFound] = useState(false)
   const [tab, setTab] = useState<Tab>("unannotated")
   const [images, setImages] = useState<JobImageSummary[]>([])
   const [imagesTotal, setImagesTotal] = useState(0)
@@ -72,6 +78,7 @@ export function JobPage() {
   const [selectedImageIds, setSelectedImageIds] = useState<string[]>([])
   const [addToDatasetOpen, setAddToDatasetOpen] = useState(false)
   const [sendingSelectedToUnannotated, setSendingSelectedToUnannotated] = useState(false)
+  const [markingAnnotated, setMarkingAnnotated] = useState(false)
   const addToast = useToastStore((s) => s.addToast)
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -144,7 +151,12 @@ export function JobPage() {
       workspaceId, projectId, jobId,
       labelerFilter === "all" ? undefined : labelerFilter,
       reviewerFilter === "all" ? undefined : reviewerFilter
-    ).then(setJob)
+    )
+      .then((res) => {
+        setJob(res)
+        setJobNotFound(false)
+      })
+      .catch(() => setJobNotFound(true))
   }
 
   useEffect(() => {
@@ -197,6 +209,37 @@ export function JobPage() {
       refetchJob()
     } finally {
       setSendingSelectedToUnannotated(false)
+    }
+  }
+
+  async function handleMarkAnnotated() {
+    if (!workspaceId || !projectId || !jobId || selectedImageIds.length === 0 || markingAnnotated) return
+    setMarkingAnnotated(true)
+    try {
+      const res = await markJobImagesAnnotated(workspaceId, projectId, jobId, selectedImageIds)
+      if (res.moved > 0) {
+        addToast({
+          variant: "success",
+          title: "Moved to Annotated",
+          description:
+            res.skipped_no_annotations > 0
+              ? `${res.moved} image${res.moved !== 1 ? "s" : ""} moved — ${res.skipped_no_annotations} skipped (no annotations yet).`
+              : `${res.moved} image${res.moved !== 1 ? "s" : ""}.`,
+        })
+      } else {
+        addToast({
+          variant: "error",
+          title: "Nothing to move",
+          description: "None of the selected images have annotations yet — annotate them first.",
+        })
+      }
+      setImages((prev) => prev.filter((img) => !selectedImageIds.includes(img.id)))
+      setSelectedImageIds([])
+      refetchJob()
+    } catch {
+      addToast({ variant: "error", title: "Couldn't move to Annotated", description: "Please try again." })
+    } finally {
+      setMarkingAnnotated(false)
     }
   }
 
@@ -397,6 +440,27 @@ export function JobPage() {
     navigate(`/projects/${projectId}/annotate/tool/${job.id}?image=${imageId}`)
   }
 
+  if (jobNotFound) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 overflow-hidden p-8 text-center">
+        <p className="text-sm font-medium text-foreground">This job no longer exists.</p>
+        <p className="max-w-sm text-sm text-muted-foreground">
+          Most likely its images were already added to the dataset — that moves them out of this
+          job entirely, so there's nothing left here to review. Check the Dataset tab.
+        </p>
+        <Button variant="brand" asChild>
+          <Link to={`/projects/${projectId}/dataset`}>Go to Dataset</Link>
+        </Button>
+        <Link
+          to={`/projects/${projectId}/annotate`}
+          className="text-sm font-medium text-muted-foreground hover:text-foreground hover:underline"
+        >
+          Back to the Annotate board
+        </Link>
+      </div>
+    )
+  }
+
   if (!job) {
     return (
       <div className="flex flex-1 overflow-hidden">
@@ -423,14 +487,24 @@ export function JobPage() {
         </div>
         <p className="mb-1 text-xs font-medium text-muted-foreground">{progressPercent}% complete</p>
         <p className="mb-1 text-sm font-medium text-foreground">{job.total_images} Images</p>
+        {/* Approved/Rejected only mean anything once a reviewer is actually
+            checking work — with no reviewer on the project these sit at 0
+            forever, which read as "nothing's been reviewed yet" rather than
+            "there's no review step here at all." Hidden instead of shown
+            stuck at zero. */}
+        {projectHasReviewers && (
+          <>
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span className="size-1.5 rounded-full bg-emerald-500" /> {job.approved_count} Approved
+            </p>
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span className="size-1.5 rounded-full bg-orange-500" /> {job.rejected_count} Rejected
+            </p>
+          </>
+        )}
         <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <span className="size-1.5 rounded-full bg-emerald-500" /> {job.approved_count} Approved
-        </p>
-        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <span className="size-1.5 rounded-full bg-orange-500" /> {job.rejected_count} Rejected
-        </p>
-        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <span className="size-1.5 rounded-full border border-muted-foreground" /> {job.pending_review_count} Annotated
+          <span className="size-1.5 rounded-full border border-muted-foreground" />{" "}
+          {projectHasReviewers ? job.pending_review_count : job.annotated_count} Annotated
         </p>
         <p className="mb-5 flex items-center gap-1.5 text-xs text-muted-foreground">
           <span className="size-1.5 rounded-full border border-muted-foreground" /> {job.unannotated_count} Unannotated
@@ -600,6 +674,19 @@ export function JobPage() {
             </div>
           )}
           <div className="flex items-center gap-2">
+            {tab === "unannotated" && canAnnotate && !isDatasetStage && selectedImageIds.length > 0 && (
+              <Button
+                variant="outline"
+                onClick={handleMarkAnnotated}
+                disabled={markingAnnotated}
+                title="For images that already have boxes on them — e.g. one a reviewer rejected by mistake. One with no annotations yet is left here."
+              >
+                <CheckCheck className="size-4" />
+                {markingAnnotated
+                  ? "Moving…"
+                  : `Add ${selectedImageIds.length} to Annotated`}
+              </Button>
+            )}
             {tab === "unannotated" && canAnnotate && !isDatasetStage && (
               <Button variant="brand" asChild>
                 <Link to={`/projects/${projectId}/annotate/tool/${job.id}`}>Start Annotating</Link>
@@ -646,10 +733,26 @@ export function JobPage() {
                 {reviewing ? "Working…" : `Reject ${selectedImageIds.length}`}
               </Button>
             )}
-            {canAnnotate && projectHasReviewers && !isDatasetStage && (
-              <Button variant="outline" onClick={() => setReviewOpen(true)}>
-                Submit for Review
-              </Button>
+            {tab === "annotated" && canAnnotate && projectHasReviewers && !isDatasetStage && (
+              hasReviewers ? (
+                // Once a job has reviewers attached, there's nothing left to
+                // "submit" — _assign_pending_reviews (backend) keeps routing
+                // any newly-annotated image to them automatically from then
+                // on, on every read, not just at the moment this was first
+                // clicked. Showing the same clickable button forever made it
+                // look like the submit never registered.
+                <span
+                  className="flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-sm text-muted-foreground"
+                  title={`Already submitted to ${reviewers.length} reviewer${reviewers.length !== 1 ? "s" : ""} — new annotated images are routed to them automatically.`}
+                >
+                  <CheckCheck className="size-4" />
+                  Submitted for Review
+                </span>
+              ) : (
+                <Button variant="outline" onClick={() => setReviewOpen(true)}>
+                  Submit for Review
+                </Button>
+              )
             )}
             {canAnnotate && !isDatasetStage && (
               <Button
@@ -682,8 +785,8 @@ export function JobPage() {
           </div>
         </div>
 
-        <div className="mb-5 flex items-center justify-between">
-          <div className="flex items-center gap-6 border-b border-border">
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-y-3">
+          <div className="flex shrink-0 items-center gap-6 border-b border-border">
             {(() => {
               // A Reviewer's "To Do" is THEIR queue — images the labeler
               // already sent for review — not the labeler's own unannotated
@@ -753,14 +856,14 @@ export function JobPage() {
               </button>
             )}
           </div>
-          <div className="flex items-center gap-3">
-            <label className="flex items-center gap-1.5 text-sm text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex shrink-0 items-center gap-1.5 text-sm whitespace-nowrap text-muted-foreground">
               <Checkbox checked={allSelected} onCheckedChange={toggleSelectAll} />
               {selectedImageIds.length > 0 ? `${selectedImageIds.length} selected` : "Select all"}
             </label>
             {showLabelerFilter && !labelerFilterInertForViewer && job.assignments.length > 0 && (
               <>
-                <span className="text-sm text-muted-foreground">Labeler:</span>
+                <span className="shrink-0 text-sm whitespace-nowrap text-muted-foreground">Labeler:</span>
                 <Select value={labelerFilter} onValueChange={setLabelerFilter}>
                   <SelectTrigger className="w-40">
                     <SelectValue />
@@ -778,7 +881,7 @@ export function JobPage() {
             )}
             {showReviewerFilter && (tab === "annotated" || tab === "approved") && reviewers.length > 0 && (
               <>
-                <span className="text-sm text-muted-foreground">Reviewer:</span>
+                <span className="shrink-0 text-sm whitespace-nowrap text-muted-foreground">Reviewer:</span>
                 <Select value={reviewerFilter} onValueChange={setReviewerFilter}>
                   <SelectTrigger className="w-40">
                     <SelectValue />
@@ -794,9 +897,9 @@ export function JobPage() {
                 </Select>
               </>
             )}
-            <span className="text-sm text-muted-foreground">Sort By:</span>
+            <span className="shrink-0 text-sm whitespace-nowrap text-muted-foreground">Sort By:</span>
             <Select defaultValue="newest">
-              <SelectTrigger className="w-36">
+              <SelectTrigger className="w-36 shrink-0">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -836,13 +939,19 @@ export function JobPage() {
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
             {images.map((img) => {
               const selected = selectedImageIds.includes(img.id)
+              // Matches the Dataset page's own SPLIT_BADGE colors (and the
+              // annotation tool's split pill) — these badges only started
+              // showing up on Annotating-stage jobs once split detection
+              // moved to upload time, and reusing one flat brand color for
+              // all three made them unreadable at a glance instead of an
+              // actual color-coded split.
               const splitInfo =
                 img.split === "train"
-                  ? { label: "Train", icon: Activity }
+                  ? { label: "Train", icon: Activity, className: "bg-brand text-brand-foreground" }
                   : img.split === "valid"
-                    ? { label: "Valid", icon: ShieldCheck }
+                    ? { label: "Valid", icon: ShieldCheck, className: "bg-blue-500 text-white" }
                     : img.split === "test"
-                      ? { label: "Test", icon: Pencil }
+                      ? { label: "Test", icon: Pencil, className: "bg-orange-500 text-white" }
                       : null
               return (
                 <div
@@ -869,7 +978,9 @@ export function JobPage() {
                       </div>
                     )}
                     {splitInfo && (
-                      <span className="absolute bottom-1.5 left-1.5 flex items-center gap-1 rounded-full bg-brand px-2 py-0.5 text-[10px] font-medium text-brand-foreground shadow-sm">
+                      <span
+                        className={`absolute bottom-1.5 left-1.5 flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium shadow-sm ${splitInfo.className}`}
+                      >
                         <splitInfo.icon className="size-2.5" />
                         {splitInfo.label}
                       </span>

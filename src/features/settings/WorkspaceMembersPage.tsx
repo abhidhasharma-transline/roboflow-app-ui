@@ -16,6 +16,7 @@ import { InviteMemberDialog } from "@/features/workspace/InviteMemberDialog"
 import { EditMemberDialog } from "@/features/workspace/EditMemberDialog"
 import { useProjects } from "@/hooks/useProjects"
 import { useAuthStore } from "@/stores/authStore"
+import { useWorkspaceStore } from "@/stores/workspaceStore"
 import { useToastStore } from "@/stores/toastStore"
 import { initials, roleLabel } from "@/lib/userDisplay"
 import { grantedPermissions, PERMISSION_LABELS } from "@/lib/permissions"
@@ -34,6 +35,9 @@ export function WorkspaceMembersPage() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const navigate = useNavigate()
   const currentUser = useAuthStore((s) => s.user)
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
+  const resetActiveWorkspace = useWorkspaceStore((s) => s.reset)
+  const bumpWorkspacesVersion = useWorkspaceStore((s) => s.bumpWorkspacesVersion)
   const [workspace, setWorkspace] = useState<Workspace | null>(null)
   const [members, setMembers] = useState<WorkspaceMember[]>([])
   const [pendingInvites, setPendingInvites] = useState<WorkspaceInvitation[] | null>(null)
@@ -91,6 +95,11 @@ export function WorkspaceMembersPage() {
     try {
       await deleteWorkspace(workspaceId)
       addToast({ variant: "success", title: "Workspace deleted" })
+      // Otherwise the sidebar kept showing this workspace as active (and it
+      // stayed in the switcher's dropdown) until a hard refresh — nothing
+      // else clears an in-memory-only Zustand store on its own.
+      if (workspaceId === activeWorkspaceId) resetActiveWorkspace()
+      bumpWorkspacesVersion()
       navigate("/settings/workspaces")
     } catch (err) {
       addToast({ variant: "error", title: "Couldn't delete workspace", description: extractErrorMessage(err) })
